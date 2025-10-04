@@ -5,6 +5,8 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const crypto = require('crypto');
+const db = require('./database');
+const scheduler = require('./scheduler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -65,6 +67,14 @@ async function verifyIdToken(idToken) {
     });
   });
 }
+
+// Dashboard route
+app.get('/dashboard', (req, res) => {
+  if (!req.session.user) {
+    return res.redirect('/');
+  }
+  res.sendFile(__dirname + '/public/dashboard.html');
+});
 
 // Root route - serve landing page
 app.get('/', (req, res) => {
@@ -151,7 +161,7 @@ app.get('/auth/linkedin', (req, res) => {
     response_type: 'code',
     client_id: process.env.LINKEDIN_CLIENT_ID,
     redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
-    scope: 'openid profile email',
+    scope: 'openid profile email w_member_social r_member_social',
     state: state,
     nonce: nonce
   });
@@ -277,6 +287,13 @@ app.get('/auth/linkedin/callback', async (req, res) => {
       picture: userInfo.picture
     };
 
+    // Persist tokens to database for API calls
+    await db.saveUser(userInfo, {
+      access_token,
+      refresh_token,
+      expires_in
+    });
+
     // Clean up state and nonce
     delete req.session.state;
     delete req.session.nonce;
@@ -341,6 +358,272 @@ app.get('/auth/linkedin/callback', async (req, res) => {
   }
 });
 
+// Middleware to check authentication
+function requireAuth(req, res, next) {
+  if (!req.session.user) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  next();
+}
+
+// Rate limiter middleware
+const rateLimiters = new Map();
+
+function rateLimit(maxRequests, windowMs) {
+  return (req, res, next) => {
+    const key = req.session.user?.sub || req.ip;
+    const now = Date.now();
+
+    if (!rateLimiters.has(key)) {
+      rateLimiters.set(key, []);
+    }
+
+    const requests = rateLimiters.get(key).filter(time => now - time < windowMs);
+    requests.push(now);
+    rateLimiters.set(key, requests);
+
+    if (requests.length > maxRequests) {
+      return res.status(429).json({
+        error: `Rate limit exceeded. Max ${maxRequests} requests per ${windowMs/1000} seconds.`
+      });
+    }
+
+    next();
+  };
+}
+
+// API: Get rate limit status
+app.get('/api/rate-limit', requireAuth, async (req, res) => {
+  try {
+    const count = await db.getTodayApiCallCount();
+    res.json({
+      used: count,
+      limit: 500,
+      remaining: Math.max(0, 500 - count),
+      resetAt: new Date().setHours(24, 0, 0, 0)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Create scheduled post
+app.post('/api/posts/schedule', requireAuth, async (req, res) => {
+  try {
+    const { content, image_url, publish_at } = req.body;
+
+    if (!content || !publish_at) {
+      return res.status(400).json({ error: 'Content and publish_at required' });
+    }
+
+    // Check daily limit
+    const todayCount = await db.getTodayScheduledPostCount(req.session.user.sub);
+    if (todayCount >= 10) {
+      return res.status(429).json({ error: 'Daily limit of 10 posts reached' });
+    }
+
+    // Validate publish_at is in the future
+    const publishTimestamp = new Date(publish_at).getTime() / 1000;
+    if (publishTimestamp <= Date.now() / 1000) {
+      return res.status(400).json({ error: 'Publish time must be in the future' });
+    }
+
+    const postId = await db.createScheduledPost(
+      req.session.user.sub,
+      content,
+      image_url || null,
+      publishTimestamp
+    );
+
+    res.json({ success: true, id: postId });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get scheduled posts
+app.get('/api/posts/scheduled', requireAuth, async (req, res) => {
+  try {
+    const posts = await db.getScheduledPosts(req.session.user.sub);
+    res.json(posts);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Delete scheduled post
+app.delete('/api/posts/scheduled/:id', requireAuth, async (req, res) => {
+  try {
+    const deleted = await db.deleteScheduledPost(req.params.id, req.session.user.sub);
+    if (deleted === 0) {
+      return res.status(404).json({ error: 'Post not found or already published' });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get user's published posts
+app.get('/api/posts/published', requireAuth, rateLimit(20, 60000), async (req, res) => {
+  try {
+    const user = await db.getUser(req.session.user.sub);
+    if (!user || !user.access_token) {
+      return res.status(401).json({ error: 'No access token found' });
+    }
+
+    // Track API call
+    await db.trackApiCall('/rest/posts', 'GET', 200);
+
+    // Fetch user's posts from LinkedIn
+    const response = await axios.get('https://api.linkedin.com/rest/posts', {
+      headers: {
+        'Authorization': `Bearer ${user.access_token}`,
+        'LinkedIn-Version': '202405',
+        'X-Restli-Protocol-Version': '2.0.0'
+      },
+      params: {
+        author: `urn:li:person:${user.sub}`,
+        q: 'author',
+        count: 20
+      }
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    await db.trackApiCall('/rest/posts', 'GET', error.response?.status || 500);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// API: Get post comments
+app.get('/api/posts/:postId/comments', requireAuth, rateLimit(20, 60000), async (req, res) => {
+  try {
+    const user = await db.getUser(req.session.user.sub);
+    if (!user || !user.access_token) {
+      return res.status(401).json({ error: 'No access token found' });
+    }
+
+    // Track API call
+    await db.trackApiCall('/rest/comments', 'GET', 200);
+
+    const response = await axios.get(`https://api.linkedin.com/rest/comments`, {
+      headers: {
+        'Authorization': `Bearer ${user.access_token}`,
+        'LinkedIn-Version': '202405',
+        'X-Restli-Protocol-Version': '2.0.0'
+      },
+      params: {
+        q: 'post',
+        post: req.params.postId
+      }
+    });
+
+    res.json(response.data);
+  } catch (error) {
+    await db.trackApiCall('/rest/comments', 'GET', error.response?.status || 500);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// API: Like a comment
+app.post('/api/comments/:commentId/like', requireAuth, rateLimit(3, 60000), async (req, res) => {
+  try {
+    const user = await db.getUser(req.session.user.sub);
+    if (!user || !user.access_token) {
+      return res.status(401).json({ error: 'No access token found' });
+    }
+
+    // Track API call
+    await db.trackApiCall('/rest/reactions', 'POST', 201);
+
+    const response = await axios.post(
+      'https://api.linkedin.com/rest/reactions',
+      {
+        root: req.params.commentId,
+        reactionType: 'LIKE'
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${user.access_token}`,
+          'LinkedIn-Version': '202405',
+          'X-Restli-Protocol-Version': '2.0.0',
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    res.json({ success: true, data: response.data });
+  } catch (error) {
+    await db.trackApiCall('/rest/reactions', 'POST', error.response?.status || 500);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// API: Get analytics data
+app.get('/api/analytics', requireAuth, async (req, res) => {
+  try {
+    const postsPerWeek = await db.getPostsPerWeek(req.session.user.sub);
+    const scheduledPosts = await db.getScheduledPosts(req.session.user.sub);
+
+    const publishedCount = scheduledPosts.filter(p => p.status === 'published').length;
+    const pendingCount = scheduledPosts.filter(p => p.status === 'pending').length;
+
+    res.json({
+      postsPerWeek,
+      summary: {
+        totalPublished: publishedCount,
+        totalPending: pendingCount,
+        totalScheduled: scheduledPosts.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Export analytics data
+app.get('/api/analytics/export', requireAuth, async (req, res) => {
+  try {
+    const postsPerWeek = await db.getPostsPerWeek(req.session.user.sub, 52);
+    const scheduledPosts = await db.getScheduledPosts(req.session.user.sub, 1000);
+    const apiCalls = await db.getRecentApiCalls(1000);
+
+    const exportData = {
+      exportDate: new Date().toISOString(),
+      user: {
+        sub: req.session.user.sub,
+        name: req.session.user.name,
+        email: req.session.user.email
+      },
+      analytics: {
+        postsPerWeek,
+        totalPosts: scheduledPosts.length,
+        publishedPosts: scheduledPosts.filter(p => p.status === 'published').length,
+        pendingPosts: scheduledPosts.filter(p => p.status === 'pending').length,
+        failedPosts: scheduledPosts.filter(p => p.status === 'failed').length
+      },
+      scheduledPosts,
+      apiUsage: {
+        totalCalls: apiCalls.length,
+        recentCalls: apiCalls.slice(0, 100)
+      }
+    };
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename=linkedin-analytics-${Date.now()}.json`);
+    res.json(exportData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Logout route
 app.get('/logout', (req, res) => {
   req.session.destroy((err) => {
@@ -355,4 +638,15 @@ app.get('/logout', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
   console.log('Press Ctrl+C to stop');
+
+  // Start post scheduler
+  scheduler.start();
+});
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\nShutting down gracefully...');
+  scheduler.stop();
+  await db.close();
+  process.exit(0);
 });

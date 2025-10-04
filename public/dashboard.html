@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn Automation Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f5f5f5;
+    }
+
+    .header {
+      background: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 15px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logo {
+      font-size: 20px;
+      font-weight: 600;
+      color: #0073b1;
+    }
+
+    .rate-limit {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .rate-limit-badge {
+      background: #e7f3ff;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 14px;
+      color: #0073b1;
+      font-weight: 500;
+    }
+
+    .rate-limit-badge.warning {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .rate-limit-badge.danger {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .nav {
+      background: white;
+      padding: 0 30px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .nav a {
+      display: inline-block;
+      padding: 15px 20px;
+      text-decoration: none;
+      color: #666;
+      border-bottom: 3px solid transparent;
+    }
+
+    .nav a:hover,
+    .nav a.active {
+      color: #0073b1;
+      border-bottom-color: #0073b1;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 30px auto;
+      padding: 0 20px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      padding: 25px;
+      margin-bottom: 20px;
+    }
+
+    .card h2 {
+      margin-bottom: 20px;
+      color: #333;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      color: #666;
+      font-weight: 500;
+    }
+
+    .form-group textarea,
+    .form-group input {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+
+    .form-group textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+
+    .btn {
+      background: #0073b1;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      transition: background 0.3s;
+    }
+
+    .btn:hover {
+      background: #005885;
+    }
+
+    .btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: #666;
+    }
+
+    .btn-secondary:hover {
+      background: #444;
+    }
+
+    .btn-danger {
+      background: #dc3545;
+    }
+
+    .btn-danger:hover {
+      background: #c82333;
+    }
+
+    .posts-list {
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .post-item {
+      border: 1px solid #e0e0e0;
+      border-radius: 4px;
+      padding: 15px;
+      margin-bottom: 10px;
+    }
+
+    .post-content {
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .post-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .post-status {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status-pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .status-published {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .status-failed {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .alert {
+      padding: 12px 15px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+
+    .alert-success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .alert-error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .alert-info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">LinkedIn Automation</div>
+    <div class="rate-limit">
+      <div class="rate-limit-badge" id="rateLimitBadge">Loading...</div>
+      <a href="/logout" class="btn btn-secondary">Logout</a>
+    </div>
+  </div>
+
+  <div class="nav">
+    <a href="#schedule" class="active" onclick="showTab('schedule')">Schedule Post</a>
+    <a href="#scheduled" onclick="showTab('scheduled')">Scheduled Posts</a>
+    <a href="#engagement" onclick="showTab('engagement')">Engagement</a>
+    <a href="#analytics" onclick="showTab('analytics')">Analytics</a>
+  </div>
+
+  <div class="container">
+    <!-- Schedule Post Tab -->
+    <div id="scheduleTab" class="tab-content">
+      <div class="card">
+        <h2>Schedule New Post</h2>
+        <div id="scheduleAlert"></div>
+        <form id="scheduleForm">
+          <div class="form-group">
+            <label for="postContent">Post Content*</label>
+            <textarea id="postContent" placeholder="What's on your mind?" required maxlength="3000"></textarea>
+            <small style="color: #666; display: block; margin-top: 5px;">
+              <span id="charCount">0</span>/3000 characters
+            </small>
+          </div>
+          <div class="form-group">
+            <label for="imageUrl">Image URL (optional)</label>
+            <input type="url" id="imageUrl" placeholder="https://example.com/image.jpg">
+          </div>
+          <div class="form-group">
+            <label for="publishAt">Publish At*</label>
+            <input type="datetime-local" id="publishAt" required>
+          </div>
+          <button type="submit" class="btn" id="scheduleBtn">Schedule Post</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Scheduled Posts Tab -->
+    <div id="scheduledTab" class="tab-content hidden">
+      <div class="card">
+        <h2>Scheduled Posts</h2>
+        <div id="scheduledAlert"></div>
+        <div class="posts-list" id="scheduledPostsList">
+          <div class="loading">Loading scheduled posts...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Engagement Tab -->
+    <div id="engagementTab" class="tab-content hidden">
+      <div class="card">
+        <h2>Your Published Posts</h2>
+        <div id="engagementAlert"></div>
+        <button class="btn" onclick="loadPublishedPosts()" style="margin-bottom: 15px;">
+          Refresh Posts
+        </button>
+        <div class="posts-list" id="publishedPostsList">
+          <div class="loading">Click "Refresh Posts" to load your LinkedIn posts</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analytics Tab -->
+    <div id="analyticsTab" class="tab-content hidden">
+      <div class="card">
+        <h2>Analytics</h2>
+        <div id="analyticsContent">
+          <div class="loading">Loading analytics...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Tab switching
+    function showTab(tabName) {
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.nav a').forEach(el => el.classList.remove('active'));
+
+      document.getElementById(tabName + 'Tab').classList.remove('hidden');
+      event.target.classList.add('active');
+
+      if (tabName === 'scheduled') {
+        loadScheduledPosts();
+      } else if (tabName === 'analytics') {
+        loadAnalytics();
+      }
+    }
+
+    // Update rate limit badge
+    async function updateRateLimit() {
+      try {
+        const res = await fetch('/api/rate-limit');
+        const data = await res.json();
+
+        const badge = document.getElementById('rateLimitBadge');
+        badge.textContent = `${data.used}/${data.limit} API calls today`;
+
+        if (data.used >= 450) {
+          badge.className = 'rate-limit-badge danger';
+        } else if (data.used >= 350) {
+          badge.className = 'rate-limit-badge warning';
+        } else {
+          badge.className = 'rate-limit-badge';
+        }
+      } catch (error) {
+        console.error('Failed to update rate limit:', error);
+      }
+    }
+
+    // Character counter
+    document.getElementById('postContent').addEventListener('input', (e) => {
+      document.getElementById('charCount').textContent = e.target.value.length;
+    });
+
+    // Schedule post form
+    document.getElementById('scheduleForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const btn = document.getElementById('scheduleBtn');
+      const alert = document.getElementById('scheduleAlert');
+      btn.disabled = true;
+      btn.textContent = 'Scheduling...';
+      alert.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/posts/schedule', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: document.getElementById('postContent').value,
+            image_url: document.getElementById('imageUrl').value || null,
+            publish_at: document.getElementById('publishAt').value
+          })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to schedule post');
+        }
+
+        alert.innerHTML = '<div class="alert alert-success">Post scheduled successfully!</div>';
+        document.getElementById('scheduleForm').reset();
+        document.getElementById('charCount').textContent = '0';
+
+      } catch (error) {
+        alert.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Schedule Post';
+      }
+    });
+
+    // Load scheduled posts
+    async function loadScheduledPosts() {
+      const list = document.getElementById('scheduledPostsList');
+      list.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const res = await fetch('/api/posts/scheduled');
+        const posts = await res.json();
+
+        if (posts.length === 0) {
+          list.innerHTML = '<p style="text-align: center; color: #666;">No scheduled posts</p>';
+          return;
+        }
+
+        list.innerHTML = posts.map(post => `
+          <div class="post-item">
+            <div class="post-content">${escapeHtml(post.content.substring(0, 200))}${post.content.length > 200 ? '...' : ''}</div>
+            <div class="post-meta">
+              <span>Publish: ${new Date(post.publish_at * 1000).toLocaleString()}</span>
+              <div>
+                <span class="post-status status-${post.status}">${post.status.toUpperCase()}</span>
+                ${post.status === 'pending' ? `<button class="btn btn-danger" style="margin-left: 10px; padding: 4px 10px; font-size: 12px;" onclick="deletePost(${post.id})">Delete</button>` : ''}
+              </div>
+            </div>
+            ${post.error_message ? `<div style="color: #dc3545; font-size: 12px; margin-top: 5px;">Error: ${escapeHtml(post.error_message)}</div>` : ''}
+          </div>
+        `).join('');
+
+      } catch (error) {
+        list.innerHTML = `<div class="alert alert-error">Failed to load posts: ${error.message}</div>`;
+      }
+    }
+
+    // Delete scheduled post
+    async function deletePost(id) {
+      if (!confirm('Are you sure you want to delete this scheduled post?')) return;
+
+      try {
+        const res = await fetch(`/api/posts/scheduled/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Failed to delete');
+
+        loadScheduledPosts();
+      } catch (error) {
+        alert('Failed to delete post: ' + error.message);
+      }
+    }
+
+    // Load published posts
+    async function loadPublishedPosts() {
+      const list = document.getElementById('publishedPostsList');
+      const alert = document.getElementById('engagementAlert');
+      list.innerHTML = '<div class="loading">Loading...</div>';
+      alert.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/posts/published');
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to load posts');
+        }
+
+        updateRateLimit();
+
+        const posts = data.elements || [];
+        if (posts.length === 0) {
+          list.innerHTML = '<p style="text-align: center; color: #666;">No published posts found</p>';
+          return;
+        }
+
+        list.innerHTML = posts.map(post => `
+          <div class="post-item">
+            <div class="post-content">${escapeHtml(post.commentary || 'No content')}</div>
+            <div class="post-meta">
+              <span>Posted: ${new Date(post.createdAt).toLocaleString()}</span>
+              <button class="btn" style="padding: 6px 14px; font-size: 13px;" onclick="viewComments('${post.id}')">
+                View Comments
+              </button>
+            </div>
+          </div>
+        `).join('');
+
+      } catch (error) {
+        alert.innerHTML = `<div class="alert alert-error">${error.message}</div>`;
+        list.innerHTML = '';
+      }
+    }
+
+    // View comments
+    async function viewComments(postId) {
+      if (!confirm('Load comments for this post?')) return;
+
+      try {
+        const res = await fetch(`/api/posts/${encodeURIComponent(postId)}/comments`);
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to load comments');
+        }
+
+        updateRateLimit();
+
+        const comments = data.elements || [];
+        if (comments.length === 0) {
+          alert('No comments on this post');
+          return;
+        }
+
+        const html = comments.map((comment, i) => `
+          <div style="border-top: 1px solid #e0e0e0; padding: 10px 0;">
+            <strong>${i + 1}. ${escapeHtml(comment.author?.name || 'Unknown')}</strong><br>
+            ${escapeHtml(comment.message?.text || 'No content')}<br>
+            <button class="btn" style="margin-top: 5px; padding: 4px 10px; font-size: 12px;" onclick="likeComment('${comment.id}')">
+              Like Comment
+            </button>
+          </div>
+        `).join('');
+
+        const modal = document.createElement('div');
+        modal.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;';
+        modal.innerHTML = `
+          <div style="background: white; border-radius: 8px; padding: 25px; max-width: 600px; max-height: 80vh; overflow-y: auto;">
+            <h3 style="margin-bottom: 15px;">Comments (${comments.length})</h3>
+            ${html}
+            <button class="btn btn-secondary" style="margin-top: 15px;" onclick="this.closest('div[style*=fixed]').remove()">Close</button>
+          </div>
+        `;
+        document.body.appendChild(modal);
+
+      } catch (error) {
+        alert('Failed to load comments: ' + error.message);
+      }
+    }
+
+    // Like comment
+    async function likeComment(commentId) {
+      if (!confirm('Like this comment? (Rate limit: 3 per minute)')) return;
+
+      try {
+        const res = await fetch(`/api/comments/${encodeURIComponent(commentId)}/like`, {
+          method: 'POST'
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Failed to like comment');
+        }
+
+        updateRateLimit();
+        alert('Comment liked successfully!');
+
+      } catch (error) {
+        alert('Failed to like comment: ' + error.message);
+      }
+    }
+
+    // Load analytics
+    async function loadAnalytics() {
+      const content = document.getElementById('analyticsContent');
+      content.innerHTML = '<div class="loading">Loading...</div>';
+
+      try {
+        const res = await fetch('/api/analytics');
+        const data = await res.json();
+
+        content.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px;">
+            <div style="background: #e7f3ff; padding: 20px; border-radius: 8px;">
+              <h3 style="color: #0073b1; margin-bottom: 5px;">${data.summary.totalPublished}</h3>
+              <p style="color: #666;">Total Published</p>
+            </div>
+            <div style="background: #fff3cd; padding: 20px; border-radius: 8px;">
+              <h3 style="color: #856404; margin-bottom: 5px;">${data.summary.totalPending}</h3>
+              <p style="color: #666;">Pending Posts</p>
+            </div>
+            <div style="background: #d4edda; padding: 20px; border-radius: 8px;">
+              <h3 style="color: #155724; margin-bottom: 5px;">${data.summary.totalScheduled}</h3>
+              <p style="color: #666;">Total Scheduled</p>
+            </div>
+          </div>
+
+          <h3 style="margin: 20px 0 10px;">Posts Published Per Week</h3>
+          <div style="background: #f9f9f9; padding: 15px; border-radius: 4px;">
+            ${data.postsPerWeek.map(w => `
+              <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e0e0e0;">
+                <span>Week ${w.week}</span>
+                <strong>${w.count} posts</strong>
+              </div>
+            `).join('') || '<p style="color: #666; text-align: center;">No data available</p>'}
+          </div>
+
+          <button class="btn" style="margin-top: 20px;" onclick="exportAnalytics()">
+            Export Data as JSON
+          </button>
+        `;
+
+      } catch (error) {
+        content.innerHTML = `<div class="alert alert-error">Failed to load analytics: ${error.message}</div>`;
+      }
+    }
+
+    // Export analytics
+    async function exportAnalytics() {
+      try {
+        const res = await fetch('/api/analytics/export');
+        const data = await res.json();
+
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `linkedin-analytics-${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+
+      } catch (error) {
+        alert('Failed to export data: ' + error.message);
+      }
+    }
+
+    // Utility function
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // Initialize
+    updateRateLimit();
+    setInterval(updateRateLimit, 60000); // Update every minute
+
+    // Set minimum datetime to now
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('publishAt').min = now.toISOString().slice(0, 16);
+  </script>
+</body>
+</html>
