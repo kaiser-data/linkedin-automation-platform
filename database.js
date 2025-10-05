@@ -1,7 +1,53 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const crypto = require('crypto');
 
 const DB_PATH = path.join(__dirname, 'linkedin_automation.db');
+
+// Token encryption key (must match server.js)
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';
+
+function encryptToken(token) {
+  if (!token || !ENCRYPTION_KEY) return token;
+
+  try {
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+
+    let encrypted = cipher.update(token, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+
+    const authTag = cipher.getAuthTag();
+    return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
+  } catch (error) {
+    console.error('Token encryption failed:', error.message);
+    return token;
+  }
+}
+
+function decryptToken(encryptedToken) {
+  if (!encryptedToken || !ENCRYPTION_KEY) return encryptedToken;
+
+  try {
+    const parts = encryptedToken.split(':');
+    if (parts.length !== 3) return encryptedToken;
+
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const encrypted = parts[2];
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+
+    return decrypted;
+  } catch (error) {
+    console.error('Token decryption failed:', error.message);
+    return encryptedToken;
+  }
+}
 
 class Database {
   constructor() {
@@ -97,6 +143,19 @@ class Database {
         )
       `);
 
+      // Activity log for visibility
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS activity_log (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_sub TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          action_data TEXT,
+          status TEXT NOT NULL,
+          timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+          FOREIGN KEY (user_sub) REFERENCES users(sub)
+        )
+      `);
+
       // Initialize default settings
       this.initializeDefaultSettings();
 
@@ -107,6 +166,7 @@ class Database {
       this.db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_posts_status ON scheduled_posts(status)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_posts_publish_at ON scheduled_posts(publish_at)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp DESC)');
+      this.db.run('CREATE INDEX IF NOT EXISTS idx_activity_log_user_timestamp ON activity_log(user_sub, timestamp DESC)');
     });
   }
 
@@ -143,8 +203,8 @@ class Database {
         user.name,
         user.email,
         user.picture,
-        tokens.access_token,
-        tokens.refresh_token || null,
+        encryptToken(tokens.access_token),
+        tokens.refresh_token ? encryptToken(tokens.refresh_token) : null,
         expiresAt
       ], function(err) {
         if (err) reject(err);
@@ -156,8 +216,18 @@ class Database {
   getUser(sub) {
     return new Promise((resolve, reject) => {
       this.db.get('SELECT * FROM users WHERE sub = ?', [sub], (err, row) => {
-        if (err) reject(err);
-        else resolve(row);
+        if (err) {
+          reject(err);
+        } else if (row) {
+          // Decrypt tokens before returning
+          row.access_token = decryptToken(row.access_token);
+          if (row.refresh_token) {
+            row.refresh_token = decryptToken(row.refresh_token);
+          }
+          resolve(row);
+        } else {
+          resolve(row);
+        }
       });
     });
   }
@@ -170,7 +240,7 @@ class Database {
         UPDATE users
         SET access_token = ?, token_expires_at = ?, updated_at = strftime('%s', 'now')
         WHERE sub = ?
-      `, [accessToken, expiresAt, sub], function(err) {
+      `, [encryptToken(accessToken), expiresAt, sub], function(err) {
         if (err) reject(err);
         else resolve(this.changes);
       });
@@ -471,6 +541,44 @@ class Database {
       `, [userSub, weeksAgo], (err, rows) => {
         if (err) reject(err);
         else resolve(rows || []);
+      });
+    });
+  }
+
+  // Activity log operations
+  logActivity(userSub, actionType, actionData, status) {
+    return new Promise((resolve, reject) => {
+      const dataJson = actionData ? JSON.stringify(actionData) : null;
+
+      this.db.run(`
+        INSERT INTO activity_log (user_sub, action_type, action_data, status)
+        VALUES (?, ?, ?, ?)
+      `, [userSub, actionType, dataJson, status], function(err) {
+        if (err) reject(err);
+        else resolve(this.lastID);
+      });
+    });
+  }
+
+  getRecentActivity(userSub, limit = 50) {
+    return new Promise((resolve, reject) => {
+      this.db.all(`
+        SELECT id, action_type, action_data, status, timestamp
+        FROM activity_log
+        WHERE user_sub = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) {
+          reject(err);
+        } else {
+          // Parse JSON action_data
+          const activities = rows.map(row => ({
+            ...row,
+            action_data: row.action_data ? JSON.parse(row.action_data) : null
+          }));
+          resolve(activities);
+        }
       });
     });
   }

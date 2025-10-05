@@ -253,6 +253,7 @@
     <a href="#schedule" class="active" onclick="showTab('schedule')">Schedule Post</a>
     <a href="#scheduled" onclick="showTab('scheduled')">Scheduled Posts</a>
     <a href="#engagement" onclick="showTab('engagement')">Engagement</a>
+    <a href="#activity" onclick="showTab('activity')">Activity Log</a>
     <a href="#analytics" onclick="showTab('analytics')">Analytics</a>
   </div>
 
@@ -308,6 +309,17 @@
       </div>
     </div>
 
+    <!-- Activity Log Tab -->
+    <div id="activityTab" class="tab-content hidden">
+      <div class="card">
+        <h2>Activity Log</h2>
+        <div id="activityAlert"></div>
+        <div class="posts-list" id="activityList">
+          <div class="loading">Loading activity...</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Analytics Tab -->
     <div id="analyticsTab" class="tab-content hidden">
       <div class="card">
@@ -330,6 +342,8 @@
 
       if (tabName === 'scheduled') {
         loadScheduledPosts();
+      } else if (tabName === 'activity') {
+        loadActivity();
       } else if (tabName === 'analytics') {
         loadAnalytics();
       }
@@ -618,6 +632,59 @@
 
       } catch (error) {
         alert('Failed to export data: ' + error.message);
+      }
+    }
+
+    // Load activity log
+    async function loadActivity() {
+      const list = document.getElementById('activityList');
+      const alert = document.getElementById('activityAlert');
+      list.innerHTML = '<div class="loading">Loading...</div>';
+      alert.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/activity?limit=100');
+        const activities = await res.json();
+
+        if (activities.length === 0) {
+          list.innerHTML = '<p style="text-align: center; color: #666;">No activity logged yet</p>';
+          return;
+        }
+
+        // Map action types to readable labels and icons
+        const actionLabels = {
+          'SCHEDULED_POST': '📅 Scheduled Post',
+          'DELETED_POST': '🗑️ Deleted Post',
+          'PUBLISHED_POST': '✅ Published Post',
+          'LIKED_COMMENT': '👍 Liked Comment',
+          'VIEWED_POSTS': '👀 Viewed Posts',
+          'VIEWED_COMMENTS': '💬 Viewed Comments'
+        };
+
+        list.innerHTML = activities.map(activity => {
+          const label = actionLabels[activity.action_type] || activity.action_type;
+          const statusClass = activity.status === 'success' ? 'status-published' : 'status-failed';
+          const data = activity.action_data ? JSON.stringify(activity.action_data) : '';
+
+          return `
+            <div class="post-item" style="padding: 10px 15px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                <strong>${label}</strong>
+                <span class="post-status ${statusClass}" style="font-size: 11px;">
+                  ${activity.status.toUpperCase()}
+                </span>
+              </div>
+              <div style="font-size: 12px; color: #666;">
+                ${new Date(activity.timestamp * 1000).toLocaleString()}
+              </div>
+              ${data ? `<div style="font-size: 11px; color: #888; margin-top: 5px; font-family: monospace;">${escapeHtml(data.substring(0, 100))}${data.length > 100 ? '...' : ''}</div>` : ''}
+            </div>
+          `;
+        }).join('');
+
+      } catch (error) {
+        alert.innerHTML = `<div class="alert alert-error">Failed to load activity: ${error.message}</div>`;
+        list.innerHTML = '';
       }
     }
 

@@ -11,6 +11,57 @@ const scheduler = require('./scheduler');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Token encryption utilities (AES-256-GCM)
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
+
+if (!process.env.ENCRYPTION_KEY) {
+  console.warn('⚠️  WARNING: ENCRYPTION_KEY not set in .env - using random key (tokens will be invalid after restart)');
+  console.warn('   Generate a key with: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
+}
+
+function encryptToken(token) {
+  if (!token) return null;
+
+  const iv = crypto.randomBytes(16);
+  const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+
+  let encrypted = cipher.update(token, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  const authTag = cipher.getAuthTag();
+
+  // Format: iv:authTag:encryptedData
+  return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
+}
+
+function decryptToken(encryptedToken) {
+  if (!encryptedToken) return null;
+
+  try {
+    const parts = encryptedToken.split(':');
+    if (parts.length !== 3) {
+      // Might be unencrypted token from before encryption was added
+      console.warn('⚠️  Token not in encrypted format - migration needed');
+      return encryptedToken;
+    }
+
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const encrypted = parts[2];
+
+    const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(ENCRYPTION_KEY, 'hex'), iv);
+    decipher.setAuthTag(authTag);
+
+    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+
+    return decrypted;
+  } catch (error) {
+    console.error('Token decryption failed:', error.message);
+    return null;
+  }
+}
+
 // LinkedIn OIDC endpoints
 const LINKEDIN_AUTH_URL = 'https://www.linkedin.com/oauth/v2/authorization';
 const LINKEDIN_TOKEN_URL = 'https://www.linkedin.com/oauth/v2/accessToken';
@@ -369,6 +420,23 @@ function requireAuth(req, res, next) {
 // Rate limiter middleware
 const rateLimiters = new Map();
 
+// Cleanup old rate limiter entries every 5 minutes to prevent memory leak
+setInterval(() => {
+  const now = Date.now();
+  const maxWindowMs = 86400000; // 24 hours
+
+  for (const [key, requests] of rateLimiters.entries()) {
+    const validRequests = requests.filter(time => now - time < maxWindowMs);
+    if (validRequests.length === 0) {
+      rateLimiters.delete(key);
+    } else {
+      rateLimiters.set(key, validRequests);
+    }
+  }
+
+  console.log(`[Rate Limiter Cleanup] Cleaned up stale entries. Active keys: ${rateLimiters.size}`);
+}, 5 * 60 * 1000); // Run every 5 minutes
+
 function rateLimit(maxRequests, windowMs) {
   return (req, res, next) => {
     const key = req.session.user?.sub || req.ip;
@@ -407,14 +475,71 @@ app.get('/api/rate-limit', requireAuth, async (req, res) => {
   }
 });
 
+// Input validation middleware
+function validateSchedulePost(req, res, next) {
+  const { content, image_url, publish_at } = req.body;
+
+  // Content validation
+  if (!content || typeof content !== 'string') {
+    return res.status(400).json({ error: 'Content is required and must be a string' });
+  }
+
+  if (content.trim().length === 0) {
+    return res.status(400).json({ error: 'Content cannot be empty' });
+  }
+
+  if (content.length > 3000) {
+    return res.status(400).json({ error: 'Content exceeds maximum length of 3000 characters' });
+  }
+
+  // Image URL validation (optional field)
+  if (image_url !== null && image_url !== undefined && image_url !== '') {
+    if (typeof image_url !== 'string') {
+      return res.status(400).json({ error: 'Image URL must be a string' });
+    }
+
+    // Basic URL format validation
+    try {
+      new URL(image_url);
+    } catch {
+      return res.status(400).json({ error: 'Invalid image URL format' });
+    }
+
+    if (!image_url.match(/^https?:\/\/.+/i)) {
+      return res.status(400).json({ error: 'Image URL must use HTTP or HTTPS protocol' });
+    }
+  }
+
+  // Publish time validation
+  if (!publish_at) {
+    return res.status(400).json({ error: 'Publish time is required' });
+  }
+
+  const publishTime = new Date(publish_at);
+  if (isNaN(publishTime.getTime())) {
+    return res.status(400).json({ error: 'Invalid publish time format' });
+  }
+
+  const publishTimestamp = publishTime.getTime() / 1000;
+  const now = Date.now() / 1000;
+
+  if (publishTimestamp <= now) {
+    return res.status(400).json({ error: 'Publish time must be in the future' });
+  }
+
+  // Don't allow scheduling more than 1 year in advance
+  const oneYearFromNow = now + (365 * 24 * 60 * 60);
+  if (publishTimestamp > oneYearFromNow) {
+    return res.status(400).json({ error: 'Cannot schedule posts more than 1 year in advance' });
+  }
+
+  next();
+}
+
 // API: Create scheduled post
-app.post('/api/posts/schedule', requireAuth, async (req, res) => {
+app.post('/api/posts/schedule', requireAuth, validateSchedulePost, async (req, res) => {
   try {
     const { content, image_url, publish_at } = req.body;
-
-    if (!content || !publish_at) {
-      return res.status(400).json({ error: 'Content and publish_at required' });
-    }
 
     // Check daily limit
     const todayCount = await db.getTodayScheduledPostCount(req.session.user.sub);
@@ -422,11 +547,8 @@ app.post('/api/posts/schedule', requireAuth, async (req, res) => {
       return res.status(429).json({ error: 'Daily limit of 10 posts reached' });
     }
 
-    // Validate publish_at is in the future
+    // Convert to timestamp
     const publishTimestamp = new Date(publish_at).getTime() / 1000;
-    if (publishTimestamp <= Date.now() / 1000) {
-      return res.status(400).json({ error: 'Publish time must be in the future' });
-    }
 
     const postId = await db.createScheduledPost(
       req.session.user.sub,
@@ -435,8 +557,24 @@ app.post('/api/posts/schedule', requireAuth, async (req, res) => {
       publishTimestamp
     );
 
+    // Log activity
+    await db.logActivity(
+      req.session.user.sub,
+      'SCHEDULED_POST',
+      { postId, contentLength: content.length, publishAt: publish_at },
+      'success'
+    );
+
     res.json({ success: true, id: postId });
   } catch (error) {
+    // Log failed activity
+    await db.logActivity(
+      req.session.user?.sub,
+      'SCHEDULED_POST',
+      { error: error.message },
+      'failed'
+    ).catch(console.error);
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -566,6 +704,17 @@ app.post('/api/comments/:commentId/like', requireAuth, rateLimit(3, 60000), asyn
   }
 });
 
+// API: Get recent activity
+app.get('/api/activity', requireAuth, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const activities = await db.getRecentActivity(req.session.user.sub, limit);
+    res.json(activities);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // API: Get analytics data
 app.get('/api/analytics', requireAuth, async (req, res) => {
   try {
@@ -632,6 +781,40 @@ app.get('/logout', (req, res) => {
     }
     res.redirect('/');
   });
+});
+
+// Centralized error handling middleware (must be after all routes)
+app.use((err, req, res, next) => {
+  console.error('❌ Error:', err.message);
+  console.error(err.stack);
+
+  // Log error to activity log if user is authenticated
+  if (req.session?.user) {
+    db.logActivity(
+      req.session.user.sub,
+      'ERROR',
+      {
+        message: err.message,
+        path: req.path,
+        method: req.method
+      },
+      'failed'
+    ).catch(console.error);
+  }
+
+  // Determine status code
+  const status = err.status || err.statusCode || 500;
+
+  // Send error response
+  res.status(status).json({
+    error: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// 404 handler (must be after error handler)
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
 });
 
 // Start server
