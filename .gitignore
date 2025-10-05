@@ -120,3 +120,7 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# SQLite Database
+*.db
+linkedin_automation.db

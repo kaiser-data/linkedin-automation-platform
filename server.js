@@ -298,7 +298,7 @@ app.get('/auth/linkedin/callback', async (req, res) => {
       }
     });
 
-    const { access_token, id_token } = tokenResponse.data;
+    const { access_token, id_token, refresh_token, expires_in } = tokenResponse.data;
 
     if (!access_token) {
       throw new Error('No access token received');
@@ -341,8 +341,8 @@ app.get('/auth/linkedin/callback', async (req, res) => {
     // Persist tokens to database for API calls
     await db.saveUser(userInfo, {
       access_token,
-      refresh_token,
-      expires_in
+      refresh_token: refresh_token || null,
+      expires_in: expires_in || 5184000  // Default 60 days if not provided
     });
 
     // Clean up state and nonce
