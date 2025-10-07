@@ -6,29 +6,109 @@ const db = require('./database');
 const DATA_DIR = path.join(__dirname, 'data');
 
 /**
+ * Detect CSV delimiter and structure
+ */
+function detectCSVFormat(csvContent) {
+  const lines = csvContent.split('\n').filter(line => line.trim());
+  if (lines.length < 2) {
+    throw new Error('CSV file must have at least a header row and one data row');
+  }
+
+  const header = lines[0];
+
+  // Detect delimiter (comma, semicolon, tab)
+  const delimiters = [',', ';', '\t'];
+  let detectedDelimiter = ',';
+  let maxColumns = 0;
+
+  for (const delimiter of delimiters) {
+    const columnCount = header.split(delimiter).length;
+    if (columnCount > maxColumns) {
+      maxColumns = columnCount;
+      detectedDelimiter = delimiter;
+    }
+  }
+
+  return {
+    delimiter: detectedDelimiter,
+    columnCount: maxColumns,
+    header: header,
+    sampleRow: lines[1]
+  };
+}
+
+/**
  * Parse LinkedIn Connections CSV
- * Expected format from LinkedIn export:
- * First Name, Last Name, Email Address, Company, Position, Connected On
+ * Supports multiple LinkedIn export formats:
+ * - Standard: First Name, Last Name, Email Address, Company, Position, Connected On
+ * - Extended: May include URL, Location, etc.
  */
 async function parseConnectionsCSV(csvContent) {
   try {
+    // Detect CSV format first
+    const format = detectCSVFormat(csvContent);
+    console.log(`Detected CSV format: ${format.columnCount} columns, delimiter: "${format.delimiter}"`);
+
+    // Parse with detected delimiter and flexible options
     const records = csv.parse(csvContent, {
       columns: true,
       skip_empty_lines: true,
-      trim: true
+      trim: true,
+      relax_column_count: true, // Allow variable column counts
+      skip_records_with_empty_values: false,
+      bom: true, // Handle BOM (Byte Order Mark) if present
+      delimiter: format.delimiter,
+      quote: '"',
+      escape: '"'
     });
 
-    const connections = records.map(record => ({
-      firstName: record['First Name'] || '',
-      lastName: record['Last Name'] || '',
-      email: record['Email Address'] || '',
-      company: record['Company'] || '',
-      position: record['Position'] || '',
-      connectedOn: record['Connected On'] || ''
-    }));
+    if (records.length === 0) {
+      throw new Error('CSV file is empty or has no valid records');
+    }
+
+    // Log first record to help debug
+    if (records.length > 0) {
+      console.log('Sample record columns:', Object.keys(records[0]));
+    }
+
+    // Map records to our schema, handling various column name variations
+    const connections = records.map((record, index) => {
+      // LinkedIn uses different column names in different regions/formats
+      const firstName = record['First Name'] || record['FirstName'] || record['first name'] || '';
+      const lastName = record['Last Name'] || record['LastName'] || record['last name'] || '';
+      const email = record['Email Address'] || record['Email'] || record['email'] || record['E-mail Address'] || '';
+      const company = record['Company'] || record['company'] || record['Current Company'] || '';
+      const position = record['Position'] || record['position'] || record['Job Title'] || record['Title'] || '';
+      const connectedOn = record['Connected On'] || record['Connected'] || record['connected on'] || '';
+      const linkedinUrl = record['URL'] || record['url'] || record['LinkedIn URL'] || record['Profile URL'] || '';
+
+      // Validate at least name exists (email is often missing in LinkedIn exports)
+      if (!firstName && !lastName) {
+        console.warn(`Skipping row ${index + 2}: Missing first and last name`);
+        return null;
+      }
+
+      return {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        email: email.trim(),
+        company: company.trim(),
+        position: position.trim(),
+        connectedOn: connectedOn.trim(),
+        linkedinUrl: linkedinUrl.trim()
+      };
+    }).filter(conn => conn !== null); // Remove null entries
+
+    if (connections.length === 0) {
+      throw new Error('No valid connections found in CSV. Please check the file format.');
+    }
 
     return connections;
   } catch (error) {
+    // Provide more helpful error message
+    if (error.message.includes('Invalid Record Length')) {
+      throw new Error(`CSV format error: The file appears to have inconsistent columns. Please ensure you're uploading the LinkedIn Connections export file. Details: ${error.message}`);
+    }
     throw new Error(`CSV parsing failed: ${error.message}`);
   }
 }

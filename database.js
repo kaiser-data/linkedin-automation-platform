@@ -618,8 +618,8 @@ class Database {
 
       const stmt = this.db.prepare(`
         INSERT OR IGNORE INTO connections
-        (user_sub, first_name, last_name, email, company, position, connected_on)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (user_sub, first_name, last_name, email, company, position, connected_on, linkedin_profile_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       connections.forEach(conn => {
@@ -630,7 +630,8 @@ class Database {
           conn.email,
           conn.company,
           conn.position,
-          conn.connectedOn
+          conn.connectedOn,
+          conn.linkedinUrl || null
         ], function(err) {
           if (err) {
             errors++;
