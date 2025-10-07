@@ -5,8 +5,10 @@ const axios = require('axios');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const crypto = require('crypto');
+const multer = require('multer');
 const db = require('./database');
 const scheduler = require('./scheduler');
+const connections = require('./connections');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -89,6 +91,19 @@ app.use(session({
 
 app.use(express.static('public'));
 app.use(express.json());
+
+// Configure multer for file uploads (memory storage for CSV)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  }
+});
 
 // Helper function to get signing key
 function getKey(header, callback) {
@@ -212,7 +227,7 @@ app.get('/auth/linkedin', (req, res) => {
     response_type: 'code',
     client_id: process.env.LINKEDIN_CLIENT_ID,
     redirect_uri: process.env.LINKEDIN_REDIRECT_URI,
-    scope: 'openid profile email w_member_social r_member_social',
+    scope: 'openid profile email',  // Basic scopes only - add w_member_social r_member_social after getting Community API access
     state: state,
     nonce: nonce
   });
@@ -768,6 +783,216 @@ app.get('/api/analytics/export', requireAuth, async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename=linkedin-analytics-${Date.now()}.json`);
     res.json(exportData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ========== CONNECTION MANAGEMENT ENDPOINTS ==========
+
+// API: Upload and import connections CSV
+app.post('/api/connections/import', requireAuth, upload.single('csvFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No CSV file uploaded' });
+    }
+
+    // Save the CSV file
+    const filepath = await connections.saveUploadedCSV(req.file.buffer, req.session.user.sub);
+
+    // Import connections from the file
+    const result = await connections.importConnectionsFromFile(filepath, req.session.user.sub);
+
+    // Log activity
+    await db.logActivity(
+      req.session.user.sub,
+      'IMPORT_CONNECTIONS',
+      { filename: req.file.originalname, ...result },
+      'success'
+    );
+
+    res.json({
+      success: true,
+      ...result,
+      message: `Imported ${result.imported} connections (${result.skipped} duplicates skipped)`
+    });
+  } catch (error) {
+    await db.logActivity(
+      req.session.user?.sub,
+      'IMPORT_CONNECTIONS',
+      { error: error.message },
+      'failed'
+    ).catch(console.error);
+
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get connection statistics
+app.get('/api/connections/stats', requireAuth, async (req, res) => {
+  try {
+    const stats = await connections.getConnectionStats(req.session.user.sub);
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Search connections
+app.get('/api/connections/search', requireAuth, async (req, res) => {
+  try {
+    const query = req.query.q || '';
+    const limit = parseInt(req.query.limit) || 50;
+
+    const results = await connections.searchConnections(req.session.user.sub, query, limit);
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get all connections
+app.get('/api/connections', requireAuth, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 1000;
+    const allConnections = await db.getAllConnections(req.session.user.sub, limit);
+    res.json(allConnections);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Get connections without profile data
+app.get('/api/connections/needs-data', requireAuth, async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const needingData = await connections.getConnectionsNeedingData(req.session.user.sub, limit);
+    res.json(needingData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Manually fetch profile data for a specific connection
+app.post('/api/connections/:id/fetch-profile', requireAuth, rateLimit(10, 60000), async (req, res) => {
+  try {
+    const connection = await db.getConnectionById(req.params.id, req.session.user.sub);
+
+    if (!connection) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    // Get user's access token
+    const user = await db.getUser(req.session.user.sub);
+    if (!user || !user.access_token) {
+      return res.status(401).json({ error: 'No access token found' });
+    }
+
+    // Note: LinkedIn API doesn't provide direct profile lookup by email
+    // This endpoint is prepared for when you have the profile URN or URL
+    // For now, we'll return a message about manual data entry
+
+    // Track API call attempt
+    await db.trackApiCall('/profile-fetch', 'GET', 200);
+
+    res.json({
+      success: false,
+      message: 'LinkedIn API does not support profile lookup by email. You can manually add data or use LinkedIn Sales Navigator API.',
+      connection: {
+        id: connection.id,
+        name: `${connection.first_name} ${connection.last_name}`,
+        email: connection.email,
+        company: connection.company,
+        position: connection.position
+      }
+    });
+
+  } catch (error) {
+    await db.trackApiCall('/profile-fetch', 'GET', error.response?.status || 500);
+    res.status(error.response?.status || 500).json({
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// API: Manually update connection profile data
+app.post('/api/connections/:id/update-profile', requireAuth, async (req, res) => {
+  try {
+    const { profileData } = req.body;
+
+    if (!profileData || typeof profileData !== 'object') {
+      return res.status(400).json({ error: 'Profile data is required' });
+    }
+
+    const updated = await db.updateConnectionProfileData(
+      req.params.id,
+      req.session.user.sub,
+      profileData
+    );
+
+    if (updated === 0) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    // Log activity
+    await db.logActivity(
+      req.session.user.sub,
+      'UPDATE_CONNECTION_PROFILE',
+      { connectionId: req.params.id },
+      'success'
+    );
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Update connection tags
+app.post('/api/connections/:id/tags', requireAuth, async (req, res) => {
+  try {
+    const { tags } = req.body;
+
+    if (!Array.isArray(tags)) {
+      return res.status(400).json({ error: 'Tags must be an array' });
+    }
+
+    const updated = await db.updateConnectionTags(
+      req.params.id,
+      req.session.user.sub,
+      tags
+    );
+
+    if (updated === 0) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// API: Update connection notes
+app.post('/api/connections/:id/notes', requireAuth, async (req, res) => {
+  try {
+    const { notes } = req.body;
+
+    if (typeof notes !== 'string') {
+      return res.status(400).json({ error: 'Notes must be a string' });
+    }
+
+    const updated = await db.updateConnectionNotes(
+      req.params.id,
+      req.session.user.sub,
+      notes
+    );
+
+    if (updated === 0) {
+      return res.status(404).json({ error: 'Connection not found' });
+    }
+
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

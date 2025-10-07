@@ -156,6 +156,29 @@ class Database {
         )
       `);
 
+      // Connections table for CSV imports
+      this.db.run(`
+        CREATE TABLE IF NOT EXISTS connections (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_sub TEXT NOT NULL,
+          first_name TEXT,
+          last_name TEXT,
+          email TEXT,
+          company TEXT,
+          position TEXT,
+          connected_on TEXT,
+          linkedin_profile_url TEXT,
+          profile_fetched INTEGER DEFAULT 0,
+          profile_data TEXT,
+          last_fetched_at INTEGER,
+          tags TEXT,
+          notes TEXT,
+          created_at INTEGER DEFAULT (strftime('%s', 'now')),
+          updated_at INTEGER DEFAULT (strftime('%s', 'now')),
+          FOREIGN KEY (user_sub) REFERENCES users(sub)
+        )
+      `);
+
       // Initialize default settings
       this.initializeDefaultSettings();
 
@@ -167,6 +190,9 @@ class Database {
       this.db.run('CREATE INDEX IF NOT EXISTS idx_scheduled_posts_publish_at ON scheduled_posts(publish_at)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_api_calls_timestamp ON api_calls(timestamp DESC)');
       this.db.run('CREATE INDEX IF NOT EXISTS idx_activity_log_user_timestamp ON activity_log(user_sub, timestamp DESC)');
+      this.db.run('CREATE INDEX IF NOT EXISTS idx_connections_user_sub ON connections(user_sub)');
+      this.db.run('CREATE INDEX IF NOT EXISTS idx_connections_email ON connections(email)');
+      this.db.run('CREATE INDEX IF NOT EXISTS idx_connections_profile_fetched ON connections(profile_fetched)');
     });
   }
 
@@ -579,6 +605,182 @@ class Database {
           }));
           resolve(activities);
         }
+      });
+    });
+  }
+
+  // Connection management operations
+  importConnections(userSub, connections) {
+    return new Promise((resolve, reject) => {
+      let successful = 0;
+      let skipped = 0;
+      let errors = 0;
+
+      const stmt = this.db.prepare(`
+        INSERT OR IGNORE INTO connections
+        (user_sub, first_name, last_name, email, company, position, connected_on)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      connections.forEach(conn => {
+        stmt.run([
+          userSub,
+          conn.firstName,
+          conn.lastName,
+          conn.email,
+          conn.company,
+          conn.position,
+          conn.connectedOn
+        ], function(err) {
+          if (err) {
+            errors++;
+          } else if (this.changes > 0) {
+            successful++;
+          } else {
+            skipped++;
+          }
+        });
+      });
+
+      stmt.finalize((err) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve({ successful, skipped, errors });
+        }
+      });
+    });
+  }
+
+  getConnectionStats(userSub) {
+    return new Promise((resolve, reject) => {
+      this.db.get(`
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN profile_fetched = 1 THEN 1 ELSE 0 END) as with_data,
+          SUM(CASE WHEN profile_fetched = 0 THEN 1 ELSE 0 END) as without_data
+        FROM connections
+        WHERE user_sub = ?
+      `, [userSub], (err, row) => {
+        if (err) reject(err);
+        else resolve(row || { total: 0, with_data: 0, without_data: 0 });
+      });
+    });
+  }
+
+  searchConnections(userSub, query, limit = 50) {
+    return new Promise((resolve, reject) => {
+      const searchPattern = `%${query}%`;
+      this.db.all(`
+        SELECT id, first_name, last_name, email, company, position,
+               connected_on, profile_fetched, tags, notes
+        FROM connections
+        WHERE user_sub = ? AND (
+          first_name LIKE ? OR
+          last_name LIKE ? OR
+          email LIKE ? OR
+          company LIKE ? OR
+          position LIKE ?
+        )
+        ORDER BY last_name, first_name
+        LIMIT ?
+      `, [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit],
+      (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  getConnectionsWithoutProfileData(userSub, limit = 50) {
+    return new Promise((resolve, reject) => {
+      this.db.all(`
+        SELECT id, first_name, last_name, email, company, position, connected_on
+        FROM connections
+        WHERE user_sub = ? AND profile_fetched = 0
+        ORDER BY created_at ASC
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  getConnectionById(connectionId, userSub) {
+    return new Promise((resolve, reject) => {
+      this.db.get(`
+        SELECT * FROM connections
+        WHERE id = ? AND user_sub = ?
+      `, [connectionId, userSub], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+
+  updateConnectionProfileData(connectionId, userSub, profileData) {
+    return new Promise((resolve, reject) => {
+      const dataJson = JSON.stringify(profileData);
+      const now = Math.floor(Date.now() / 1000);
+
+      this.db.run(`
+        UPDATE connections
+        SET profile_data = ?,
+            profile_fetched = 1,
+            last_fetched_at = ?,
+            updated_at = ?
+        WHERE id = ? AND user_sub = ?
+      `, [dataJson, now, now, connectionId, userSub], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  updateConnectionTags(connectionId, userSub, tags) {
+    return new Promise((resolve, reject) => {
+      const tagsJson = JSON.stringify(tags);
+      const now = Math.floor(Date.now() / 1000);
+
+      this.db.run(`
+        UPDATE connections
+        SET tags = ?, updated_at = ?
+        WHERE id = ? AND user_sub = ?
+      `, [tagsJson, now, connectionId, userSub], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  updateConnectionNotes(connectionId, userSub, notes) {
+    return new Promise((resolve, reject) => {
+      const now = Math.floor(Date.now() / 1000);
+
+      this.db.run(`
+        UPDATE connections
+        SET notes = ?, updated_at = ?
+        WHERE id = ? AND user_sub = ?
+      `, [notes, now, connectionId, userSub], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  getAllConnections(userSub, limit = 1000) {
+    return new Promise((resolve, reject) => {
+      this.db.all(`
+        SELECT id, first_name, last_name, email, company, position,
+               connected_on, profile_fetched, tags, notes, last_fetched_at
+        FROM connections
+        WHERE user_sub = ?
+        ORDER BY last_name, first_name
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
       });
     });
   }
