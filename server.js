@@ -142,6 +142,14 @@ app.get('/dashboard', (req, res) => {
   res.sendFile(__dirname + '/public/dashboard.html');
 });
 
+// Connections route
+app.get('/connections', (req, res) => {
+  if (!req.session.user) {
+    return res.redirect('/');
+  }
+  res.sendFile(__dirname + '/public/connections.html');
+});
+
 // Root route - serve landing page
 app.get('/', (req, res) => {
   if (req.session.user) {
@@ -180,17 +188,34 @@ app.get('/', (req, res) => {
           .profile-info p {
             margin: 5px 0;
           }
-          .logout-btn {
+          .nav-links {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+          }
+          .nav-btn {
             background: #0073b1;
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 12px 24px;
             border-radius: 4px;
             cursor: pointer;
-            margin-top: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            display: inline-block;
+            transition: background 0.2s;
           }
-          .logout-btn:hover {
+          .nav-btn:hover {
             background: #005885;
+          }
+          .nav-btn.secondary {
+            background: #6c757d;
+          }
+          .nav-btn.secondary:hover {
+            background: #5a6268;
           }
         </style>
       </head>
@@ -205,7 +230,11 @@ app.get('/', (req, res) => {
               <p><strong>Sub:</strong> ${req.session.user.sub || 'N/A'}</p>
             </div>
           </div>
-          <button class="logout-btn" onclick="window.location.href='/logout'">Logout</button>
+          <div class="nav-links">
+            <a href="/dashboard" class="nav-btn">📊 Dashboard</a>
+            <a href="/connections" class="nav-btn">🔗 Connections</a>
+            <a href="/logout" class="nav-btn secondary">Logout</a>
+          </div>
         </div>
       </body>
       </html>

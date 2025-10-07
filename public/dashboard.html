@@ -56,18 +56,46 @@
       color: #721c24;
     }
 
-    .nav {
+    .top-nav {
       background: white;
+      padding: 0 30px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      gap: 5px;
+    }
+
+    .top-nav a {
+      display: inline-block;
+      padding: 12px 20px;
+      text-decoration: none;
+      color: #666;
+      border-bottom: 3px solid transparent;
+      font-weight: 500;
+    }
+
+    .top-nav a:hover {
+      color: #0073b1;
+      background: #f8f9fa;
+    }
+
+    .top-nav a.active {
+      color: #0073b1;
+      border-bottom-color: #0073b1;
+    }
+
+    .nav {
+      background: #f8f9fa;
       padding: 0 30px;
       border-bottom: 1px solid #e0e0e0;
     }
 
     .nav a {
       display: inline-block;
-      padding: 15px 20px;
+      padding: 12px 20px;
       text-decoration: none;
       color: #666;
       border-bottom: 3px solid transparent;
+      font-size: 14px;
     }
 
     .nav a:hover,
@@ -247,6 +275,11 @@
       <div class="rate-limit-badge" id="rateLimitBadge">Loading...</div>
       <a href="/logout" class="btn btn-secondary">Logout</a>
     </div>
+  </div>
+
+  <div class="top-nav">
+    <a href="/dashboard" class="active">📊 Dashboard</a>
+    <a href="/connections">🔗 Connections</a>
   </div>
 
   <div class="nav">

@@ -33,20 +33,26 @@
 
     .nav {
       display: flex;
-      gap: 20px;
+      gap: 5px;
     }
 
     .nav a {
       text-decoration: none;
       color: #666;
       padding: 8px 16px;
-      border-radius: 4px;
-      transition: background 0.2s;
+      border-bottom: 3px solid transparent;
+      font-weight: 500;
+      transition: all 0.2s;
     }
 
-    .nav a:hover, .nav a.active {
-      background: #f3f6f8;
+    .nav a:hover {
       color: #0073b1;
+      background: #f8f9fa;
+    }
+
+    .nav a.active {
+      color: #0073b1;
+      border-bottom-color: #0073b1;
     }
 
     .container {
@@ -319,8 +325,8 @@
   <div class="header">
     <h1>🔗 Connections Manager</h1>
     <div class="nav">
-      <a href="/dashboard">Dashboard</a>
-      <a href="/connections.html" class="active">Connections</a>
+      <a href="/dashboard">📊 Dashboard</a>
+      <a href="/connections" class="active">🔗 Connections</a>
       <a href="/logout">Logout</a>
     </div>
   </div>
