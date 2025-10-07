@@ -770,18 +770,311 @@ class Database {
     });
   }
 
-  getAllConnections(userSub, limit = 1000) {
+  getAllConnections(userSub, limit = 1000, offset = 0) {
     return new Promise((resolve, reject) => {
       this.db.all(`
         SELECT id, first_name, last_name, email, company, position,
-               connected_on, profile_fetched, tags, notes, last_fetched_at
+               connected_on, linkedin_profile_url, profile_fetched, tags, notes, last_fetched_at
         FROM connections
         WHERE user_sub = ?
         ORDER BY last_name, first_name
+        LIMIT ? OFFSET ?
+      `, [userSub, limit, offset], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  // ========== ENGAGEMENT SYSTEM METHODS ==========
+
+  // Sync sessions
+  getSyncSession(date) {
+    return new Promise((resolve, reject) => {
+      this.db.get(`
+        SELECT * FROM sync_sessions WHERE session_date = ?
+      `, [date], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+
+  createSyncSession(data) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT INTO sync_sessions (session_date, status, api_calls_limit, started_at)
+        VALUES (?, ?, ?, ?)
+      `, [data.session_date, data.status, data.api_calls_limit, data.started_at],
+      function(err) {
+        if (err) reject(err);
+        else resolve({ id: this.lastID, ...data });
+      });
+    });
+  }
+
+  updateSyncSession(sessionId, updates) {
+    return new Promise((resolve, reject) => {
+      const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+      const values = Object.values(updates);
+
+      this.db.run(`
+        UPDATE sync_sessions SET ${fields} WHERE id = ?
+      `, [...values, sessionId], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  // Mark AI-relevant connections by keywords
+  markAIRelevantByKeywords(userSub, keywords) {
+    return new Promise((resolve, reject) => {
+      const conditions = keywords.map(() =>
+        `(LOWER(position) LIKE ? OR LOWER(company) LIKE ?)`
+      ).join(' OR ');
+
+      const params = keywords.flatMap(kw => [`%${kw}%`, `%${kw}%`]);
+
+      this.db.run(`
+        INSERT OR REPLACE INTO engagement_summary (connection_id, ai_relevant, last_calculated)
+        SELECT c.id, 1, strftime('%s', 'now')
+        FROM connections c
+        WHERE c.user_sub = ? AND (${conditions})
+      `, [userSub, ...params], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  // Sync queue operations
+  addToSyncQueue(data) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT OR IGNORE INTO sync_queue (connection_id, priority, status)
+        VALUES (?, ?, ?)
+      `, [data.connection_id, data.priority, data.status], function(err) {
+        if (err) reject(err);
+        else resolve(this.lastID);
+      });
+    });
+  }
+
+  getNextSyncBatch(limit = 10) {
+    return new Promise((resolve, reject) => {
+      this.db.all(`
+        SELECT * FROM sync_queue
+        WHERE status = 'pending'
+        ORDER BY priority DESC, created_at ASC
+        LIMIT ?
+      `, [limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  updateQueueItem(queueId, updates) {
+    return new Promise((resolve, reject) => {
+      const fields = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+      const values = Object.values(updates);
+
+      this.db.run(`
+        UPDATE sync_queue SET ${fields} WHERE id = ?
+      `, [...values, queueId], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  // Tracked posts
+  saveTrackedPost(data) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT OR REPLACE INTO tracked_posts
+        (post_id, user_sub, post_text, posted_at, sync_priority)
+        VALUES (?, ?, ?, ?, ?)
+      `, [data.post_id, data.user_sub, data.post_text, data.posted_at, data.sync_priority],
+      function(err) {
+        if (err) reject(err);
+        else resolve(this.lastID);
+      });
+    });
+  }
+
+  getTrackedPosts(userSub, limit = 10) {
+    return new Promise((resolve, reject) => {
+      this.db.all(`
+        SELECT * FROM tracked_posts
+        WHERE user_sub = ?
+        ORDER BY sync_priority DESC, posted_at DESC
         LIMIT ?
       `, [userSub, limit], (err, rows) => {
         if (err) reject(err);
         else resolve(rows || []);
+      });
+    });
+  }
+
+  // Engagement events
+  saveEngagementEvent(data) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT INTO engagement_events (connection_id, post_id, event_type, event_data, happened_at)
+        VALUES (?, ?, ?, ?, ?)
+      `, [data.connection_id, data.post_id, data.event_type, data.event_data, data.happened_at],
+      function(err) {
+        if (err) reject(err);
+        else resolve(this.lastID);
+      });
+    });
+  }
+
+  // Check if engagement is from connection (simplified - needs LinkedIn URN matching)
+  isEngagementFromConnection(actorUrn, connectionId) {
+    // TODO: Implement proper URN matching once we have LinkedIn URNs
+    // For now, return false (will be enhanced later)
+    return Promise.resolve(false);
+  }
+
+  // Update engagement summary for a connection
+  updateEngagementSummary(connectionId) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT OR REPLACE INTO engagement_summary
+        (connection_id, first_engagement, last_engagement, total_engagements,
+         total_likes, total_comments, total_shares, last_7_days, last_30_days,
+         status, last_calculated)
+        SELECT
+          connection_id,
+          MIN(happened_at) as first_engagement,
+          MAX(happened_at) as last_engagement,
+          COUNT(*) as total_engagements,
+          SUM(CASE WHEN event_type = 'like' THEN 1 ELSE 0 END) as total_likes,
+          SUM(CASE WHEN event_type = 'comment' THEN 1 ELSE 0 END) as total_comments,
+          SUM(CASE WHEN event_type = 'share' THEN 1 ELSE 0 END) as total_shares,
+          SUM(CASE WHEN happened_at > strftime('%s','now') - 604800 THEN 1 ELSE 0 END) as last_7_days,
+          SUM(CASE WHEN happened_at > strftime('%s','now') - 2592000 THEN 1 ELSE 0 END) as last_30_days,
+          CASE
+            WHEN MAX(happened_at) > strftime('%s','now') - 604800 THEN 'active'
+            WHEN MAX(happened_at) > strftime('%s','now') - 2592000 THEN 'quiet'
+            ELSE 'cold'
+          END as status,
+          strftime('%s','now') as last_calculated
+        FROM engagement_events
+        WHERE connection_id = ?
+        GROUP BY connection_id
+      `, [connectionId], function(err) {
+        if (err) reject(err);
+        else resolve(this.changes);
+      });
+    });
+  }
+
+  getEngagementSummary(connectionId) {
+    return new Promise((resolve, reject) => {
+      this.db.get(`
+        SELECT * FROM engagement_summary WHERE connection_id = ?
+      `, [connectionId], (err, row) => {
+        if (err) reject(err);
+        else resolve(row);
+      });
+    });
+  }
+
+  // Top engagers
+  getTopEngagers(userSub, limit = 10, aiRelevantOnly = false) {
+    return new Promise((resolve, reject) => {
+      const aiFilter = aiRelevantOnly ? 'AND es.ai_relevant = 1' : '';
+
+      this.db.all(`
+        SELECT c.*, es.*
+        FROM connections c
+        JOIN engagement_summary es ON c.id = es.connection_id
+        WHERE c.user_sub = ? ${aiFilter}
+        ORDER BY es.total_engagements DESC, es.last_engagement DESC
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  // Rising stars (increasing engagement)
+  getRisingStars(userSub, limit = 5, aiRelevantOnly = false) {
+    return new Promise((resolve, reject) => {
+      const aiFilter = aiRelevantOnly ? 'AND es.ai_relevant = 1' : '';
+
+      this.db.all(`
+        SELECT c.*, es.*,
+          (CAST(es.last_7_days AS REAL) / NULLIF(es.last_30_days - es.last_7_days, 0)) as velocity
+        FROM connections c
+        JOIN engagement_summary es ON c.id = es.connection_id
+        WHERE c.user_sub = ?
+          AND es.last_7_days > 0
+          ${aiFilter}
+        ORDER BY velocity DESC
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  // At-risk connections
+  getAtRiskConnections(userSub, limit = 5, aiRelevantOnly = false) {
+    return new Promise((resolve, reject) => {
+      const aiFilter = aiRelevantOnly ? 'AND es.ai_relevant = 1' : '';
+
+      this.db.all(`
+        SELECT c.*, es.*
+        FROM connections c
+        JOIN engagement_summary es ON c.id = es.connection_id
+        WHERE c.user_sub = ?
+          AND es.status IN ('quiet', 'cold')
+          AND es.total_engagements > 3
+          ${aiFilter}
+        ORDER BY es.last_engagement ASC
+        LIMIT ?
+      `, [userSub, limit], (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows || []);
+      });
+    });
+  }
+
+  // Save insights
+  saveInsight(userSub, date, type, data) {
+    return new Promise((resolve, reject) => {
+      this.db.run(`
+        INSERT OR REPLACE INTO network_insights (user_sub, insight_date, insight_type, insight_data)
+        VALUES (?, ?, ?, ?)
+      `, [userSub, date, type, JSON.stringify(data)], function(err) {
+        if (err) reject(err);
+        else resolve(this.lastID);
+      });
+    });
+  }
+
+  getLatestInsight(userSub, type) {
+    return new Promise((resolve, reject) => {
+      this.db.get(`
+        SELECT * FROM network_insights
+        WHERE user_sub = ? AND insight_type = ?
+        ORDER BY insight_date DESC
+        LIMIT 1
+      `, [userSub, type], (err, row) => {
+        if (err) reject(err);
+        else {
+          if (row && row.insight_data) {
+            row.insight_data = JSON.parse(row.insight_data);
+          }
+          resolve(row);
+        }
       });
     });
   }

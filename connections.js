@@ -45,12 +45,28 @@ function detectCSVFormat(csvContent) {
  */
 async function parseConnectionsCSV(csvContent) {
   try {
+    // LinkedIn exports often start with a "Notes:" section - skip it
+    let cleanedContent = csvContent;
+    const lines = csvContent.split('\n');
+
+    // Find the actual header row (contains "First Name" or "first name")
+    const headerIndex = lines.findIndex(line =>
+      line.toLowerCase().includes('first name') ||
+      line.toLowerCase().includes('firstname')
+    );
+
+    if (headerIndex !== -1 && headerIndex > 0) {
+      // Skip everything before the actual header
+      cleanedContent = lines.slice(headerIndex).join('\n');
+      console.log(`Skipped ${headerIndex} introductory lines to find header`);
+    }
+
     // Detect CSV format first
-    const format = detectCSVFormat(csvContent);
+    const format = detectCSVFormat(cleanedContent);
     console.log(`Detected CSV format: ${format.columnCount} columns, delimiter: "${format.delimiter}"`);
 
     // Parse with detected delimiter and flexible options
-    const records = csv.parse(csvContent, {
+    const records = csv.parse(cleanedContent, {
       columns: true,
       skip_empty_lines: true,
       trim: true,
@@ -82,9 +98,16 @@ async function parseConnectionsCSV(csvContent) {
       const connectedOn = record['Connected On'] || record['Connected'] || record['connected on'] || '';
       const linkedinUrl = record['URL'] || record['url'] || record['LinkedIn URL'] || record['Profile URL'] || '';
 
+      // Debug: Log first few records to see what we're getting
+      if (index < 3) {
+        console.log(`Row ${index}: firstName="${firstName}", lastName="${lastName}"`);
+      }
+
       // Validate at least name exists (email is often missing in LinkedIn exports)
       if (!firstName && !lastName) {
-        console.warn(`Skipping row ${index + 2}: Missing first and last name`);
+        if (index < 5) {
+          console.warn(`Skipping row ${index + 2}: Missing first and last name. Record keys:`, Object.keys(record));
+        }
         return null;
       }
 

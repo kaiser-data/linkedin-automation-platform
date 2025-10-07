@@ -1,11 +1,13 @@
 const cron = require('node-cron');
 const axios = require('axios');
 const db = require('./database');
+const SyncEngine = require('./sync-engine');
 
 class PostScheduler {
   constructor() {
     this.isRunning = false;
     this.cronJob = null;
+    this.syncJob = null;
   }
 
   start() {
@@ -19,8 +21,14 @@ class PostScheduler {
       await this.processScheduledPosts();
     });
 
+    // Daily engagement sync at 3 AM
+    this.syncJob = cron.schedule('0 3 * * *', async () => {
+      await this.runDailySync();
+    });
+
     this.isRunning = true;
     console.log('Post scheduler started');
+    console.log('Daily sync scheduler started (runs at 3 AM)');
   }
 
   stop() {
@@ -28,8 +36,13 @@ class PostScheduler {
       this.cronJob.stop();
       this.cronJob = null;
     }
+    if (this.syncJob) {
+      this.syncJob.stop();
+      this.syncJob = null;
+    }
     this.isRunning = false;
     console.log('Post scheduler stopped');
+    console.log('Daily sync scheduler stopped');
   }
 
   async processScheduledPosts() {
@@ -135,12 +148,51 @@ class PostScheduler {
     }
   }
 
+  async runDailySync() {
+    try {
+      console.log('🚀 Starting daily engagement sync...');
+
+      const users = await db.getAllUsers();
+
+      for (const user of users) {
+        if (!user.access_token) {
+          console.log(`⏭️  Skipping user ${user.sub} (no access token)`);
+          continue;
+        }
+
+        console.log(`📊 Syncing engagement for user ${user.sub}`);
+
+        const engine = new SyncEngine({
+          dailyApiLimit: 500,
+          reservePool: 50,
+          batchSize: 10
+        });
+
+        try {
+          const result = await engine.run(user.sub);
+          console.log(`✅ Sync complete for ${user.sub}: ${result.apiCallsUsed} API calls used, ${result.remaining} remaining`);
+        } catch (error) {
+          console.error(`❌ Sync failed for ${user.sub}:`, error.message);
+        }
+      }
+
+      console.log('✅ Daily sync completed for all users');
+
+    } catch (error) {
+      console.error('❌ Daily sync error:', error.message);
+    }
+  }
+
   async getStatus() {
     const pendingPosts = await db.getPendingScheduledPosts();
+    const todayUsage = await db.getTodayApiCallCount();
+
     return {
       running: this.isRunning,
       pendingPosts: pendingPosts.length,
-      nextRun: this.cronJob ? this.cronJob.nextDates(1).toString() : null
+      nextPostRun: this.cronJob ? this.cronJob.nextDates(1).toString() : null,
+      nextSyncRun: this.syncJob ? this.syncJob.nextDates(1).toString() : null,
+      todayApiCalls: todayUsage
     };
   }
 }

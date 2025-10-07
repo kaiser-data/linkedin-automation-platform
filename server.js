@@ -817,6 +817,74 @@ app.get('/api/analytics/export', requireAuth, async (req, res) => {
   }
 });
 
+// ========== ENGAGEMENT TRACKING ENDPOINTS ==========
+
+// Get AI network dashboard
+app.get('/api/ai-network', requireAuth, async (req, res) => {
+  try {
+    const topEngagers = await db.getTopEngagers(req.session.user.sub, 10, true);
+    const risingStars = await db.getRisingStars(req.session.user.sub, 5, true);
+    const atRisk = await db.getAtRiskConnections(req.session.user.sub, 5, true);
+
+    const latestSync = await db.getSyncSession(new Date().toISOString().split('T')[0]);
+
+    res.json({
+      topEngagers,
+      risingStars,
+      atRisk,
+      syncStatus: latestSync || { status: 'not_started' }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Manual sync trigger (rate limited to once per hour)
+app.post('/api/sync/trigger', requireAuth, rateLimit(1, 3600000), async (req, res) => {
+  try {
+    const SyncEngine = require('./sync-engine');
+    const engine = new SyncEngine();
+
+    // Run sync in background
+    engine.run(req.session.user.sub)
+      .then(result => {
+        console.log('✅ Manual sync completed:', result);
+      })
+      .catch(error => {
+        console.error('❌ Manual sync failed:', error);
+      });
+
+    res.json({
+      success: true,
+      message: 'Sync started in background. Check back in a few minutes.'
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get sync status
+app.get('/api/sync/status', requireAuth, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const session = await db.getSyncSession(today);
+
+    const apiUsage = await db.getTodayApiCallCount();
+
+    res.json({
+      session: session || { status: 'not_started' },
+      apiUsage: {
+        used: apiUsage,
+        limit: 500,
+        remaining: 500 - apiUsage,
+        percentage: Math.round((apiUsage / 500) * 100)
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ========== CONNECTION MANAGEMENT ENDPOINTS ==========
 
 // API: Upload and import connections CSV
@@ -883,8 +951,9 @@ app.get('/api/connections/search', requireAuth, async (req, res) => {
 // API: Get all connections
 app.get('/api/connections', requireAuth, async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 1000;
-    const allConnections = await db.getAllConnections(req.session.user.sub, limit);
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    const allConnections = await db.getAllConnections(req.session.user.sub, limit, offset);
     res.json(allConnections);
   } catch (error) {
     res.status(500).json({ error: error.message });
