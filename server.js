@@ -955,9 +955,16 @@ app.get('/api/connections', requireAuth, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 50;
     const offset = parseInt(req.query.offset) || 0;
+
+    console.log(`[API] GET /api/connections - limit: ${limit}, offset: ${offset}, user: ${req.session.user.sub}`);
+
     const allConnections = await db.getAllConnections(req.session.user.sub, limit, offset);
+
+    console.log(`[API] Returning ${allConnections.length} connections`);
+
     res.json(allConnections);
   } catch (error) {
+    console.error('[API] Error fetching connections:', error);
     res.status(500).json({ error: error.message });
   }
 });

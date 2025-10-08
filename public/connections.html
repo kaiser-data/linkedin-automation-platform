@@ -452,7 +452,17 @@
         const offset = (page - 1) * perPage;
         console.log('Fetching connections with offset:', offset);
 
-        const response = await fetch(`/api/connections?limit=${perPage}&offset=${offset}`);
+        // Add cache-busting timestamp to prevent browser caching
+        const timestamp = Date.now();
+        const url = `/api/connections?limit=${perPage}&offset=${offset}&_t=${timestamp}`;
+        console.log('Fetching URL:', url);
+
+        const response = await fetch(url, {
+          cache: 'no-store',
+          headers: {
+            'Cache-Control': 'no-cache'
+          }
+        });
         const connections = await response.json();
 
         console.log('Received', connections.length, 'connections');

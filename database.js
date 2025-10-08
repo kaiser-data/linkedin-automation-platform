@@ -837,6 +837,8 @@ class Database {
 
   getAllConnections(userSub, limit = 1000, offset = 0) {
     return new Promise((resolve, reject) => {
+      console.log(`[DB] getAllConnections - userSub: ${userSub}, limit: ${limit}, offset: ${offset}`);
+
       this.db.all(`
         SELECT id, first_name, last_name, email, company, position,
                connected_on, linkedin_profile_url, location, profile_fetched, tags, notes, last_fetched_at
@@ -845,8 +847,17 @@ class Database {
         ORDER BY last_name, first_name
         LIMIT ? OFFSET ?
       `, [userSub, limit, offset], (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
+        if (err) {
+          console.error('[DB] Error in getAllConnections:', err);
+          reject(err);
+        } else {
+          console.log(`[DB] getAllConnections returned ${rows ? rows.length : 0} rows`);
+          if (rows && rows.length > 0) {
+            console.log(`[DB] First connection: ${rows[0].first_name} ${rows[0].last_name} (ID: ${rows[0].id})`);
+            console.log(`[DB] Last connection: ${rows[rows.length-1].first_name} ${rows[rows.length-1].last_name} (ID: ${rows[rows.length-1].id})`);
+          }
+          resolve(rows || []);
+        }
       });
     });
   }
