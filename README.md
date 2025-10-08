@@ -35,13 +35,32 @@ This platform enables **supervised community engagement** on LinkedIn - combinin
 - ✅ Bulk scheduling
 - ✅ Analytics export (JSON)
 
-### 💬 Community Engagement (Planned - Requires API Access)
+### 👥 Connection Management
+- ✅ **CSV Import** - Import LinkedIn connections export (tested with 4,858 contacts)
+- ✅ **Smart Pagination** - 50 connections per page with navigation
+- ✅ **Category Search** - Search by Name, Company, Position, Location, or All Fields
+- ✅ **Location Filtering** - Filter by country/city
+- ✅ **Profile Links** - Direct clickable links to LinkedIn profiles
+- ✅ **Deduplication** - Automatic duplicate prevention
+- ✅ **Connection Stats** - Total, with data, needs data counters
+
+### 🤖 Engagement Tracking System
+- ✅ **Scalable Architecture** - Handles 5000+ connections efficiently
+- ✅ **Queue-based Sync** - Priority-based processing with resume capability
+- ✅ **AI-Relevant Filtering** - Auto-detects ML/AI/LLM professionals
+- ✅ **Progressive Sync** - Most important contacts synced first
+- ✅ **API Budget Management** - 450/500 daily limit (50 reserved)
+- ✅ **Multi-day Support** - Checkpoint system for large datasets
+- ✅ **Daily Automation** - Scheduled sync at 3 AM
+- ✅ **Analytics Ready** - Top engagers, rising stars, at-risk detection
+
+### 💬 Community Engagement (Future - Requires API Access)
 - 🔄 Intelligent comment prioritization
 - 🔄 AI-assisted reply suggestions
 - 🔄 Manual approval workflow
 - 🔄 Smart like distribution
 - 🔄 Engagement analytics
-- 🔄 Profile data access (connections only)
+- 🔄 Profile data enrichment
 
 ### 📊 Analytics & Monitoring
 - ✅ API quota tracking (500/day limit)
@@ -280,20 +299,30 @@ This app **ONLY** uses official LinkedIn APIs with:
 
 ```
 linkedin-connect/
-├── server.js              # Main Express server + API routes
-├── database.js            # SQLite database wrapper
-├── scheduler.js           # Cron-based post scheduler
-├── worker.js              # Background automation worker
+├── server.js                 # Main Express server + API routes
+├── database.js               # SQLite database wrapper (900+ lines)
+├── connections.js            # CSV import and connection management
+├── sync-engine.js           # Intelligent sync orchestrator (437 lines)
+├── scheduler.js             # Cron-based post scheduler + daily sync
+├── migrate.js               # Database migration runner
+├── worker.js                # Background automation worker
+├── migrations/
+│   ├── 001_engagement_system.sql    # Engagement tracking schema
+│   ├── 002_fix_duplicates.sql       # Deduplication migration
+│   └── 003_add_location.sql         # Location field addition
 ├── public/
-│   ├── index.html         # Landing page
-│   └── dashboard.html     # Main dashboard UI
-├── package.json           # Dependencies
-├── .env                   # Configuration (git-ignored)
-├── .env.example           # Configuration template
-├── linkedin_automation.db # SQLite database (git-ignored)
-├── README.md              # This file
-├── README-EXTENDED.md     # Detailed documentation
-└── FEATURES.md            # Feature specifications
+│   ├── index.html           # Landing page
+│   ├── dashboard.html       # Main dashboard UI
+│   └── connections.html     # Connection manager (pagination, search)
+├── data/                    # CSV imports (gitignored)
+├── package.json             # Dependencies
+├── .env                     # Configuration (git-ignored)
+├── .env.example             # Configuration template
+├── linkedin_automation.db   # SQLite database (git-ignored)
+├── README.md                # This file
+├── PROGRESS.md              # Development progress log
+├── README-EXTENDED.md       # Detailed documentation
+└── FEATURES.md              # Feature specifications
 ```
 
 ---
@@ -317,11 +346,21 @@ linkedin-connect/
 | `/api/posts/scheduled/:id` | DELETE | - | Delete pending post |
 | `/api/posts/published` | GET | 20/min | Fetch published posts |
 
-### Engagement (Requires API Access)
+### Connection Management
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/connections` | GET | Get paginated connections (limit, offset) |
+| `/api/connections/search` | GET | Category-filtered search with pagination |
+| `/api/connections/stats` | GET | Connection statistics |
+| `/api/connections/import` | POST | Upload and import CSV |
+| `/api/connections/needs-data` | GET | Connections without profile data |
+
+### Engagement Tracking
 | Endpoint | Method | Rate Limit | Description |
 |----------|--------|------------|-------------|
-| `/api/posts/:id/comments` | GET | 20/min | Get post comments |
-| `/api/comments/:id/like` | POST | 3/min | Like a comment |
+| `/api/ai-network` | GET | - | AI-relevant connections dashboard |
+| `/api/sync/trigger` | POST | 1/hour | Manual sync trigger |
+| `/api/sync/status` | GET | - | Current sync status |
 
 ### Analytics
 | Endpoint | Method | Description |
@@ -330,6 +369,12 @@ linkedin-connect/
 | `/api/analytics` | GET | Engagement analytics |
 | `/api/analytics/export` | GET | Export data as JSON |
 | `/api/activity` | GET | Recent activity log |
+
+### Engagement (Future - Requires API Access)
+| Endpoint | Method | Rate Limit | Description |
+|----------|--------|------------|-------------|
+| `/api/posts/:id/comments` | GET | 20/min | Get post comments |
+| `/api/comments/:id/like` | POST | 3/min | Like a comment |
 
 ---
 
@@ -393,14 +438,30 @@ linkedin-connect/
 
 ## 📈 Roadmap
 
-### ✅ Current Features (v2.0)
-- OAuth authentication
-- Post scheduling
-- Analytics dashboard
-- API quota tracking
-- Image URL support
+### ✅ Current Features (v2.5)
+- ✅ OAuth 2.0 + OIDC authentication
+- ✅ Post scheduling with cron automation
+- ✅ Analytics dashboard
+- ✅ API quota tracking (500/day)
+- ✅ Image URL support
+- ✅ **CSV Import System** - Import LinkedIn connections (4,858+ tested)
+- ✅ **Scalable Engagement Tracking** - Manages 5000+ connections
+- ✅ **Smart Pagination** - 50 results per page with search
+- ✅ **Category Search** - Filter by Name, Company, Position, Location
+- ✅ **Location Support** - Country/location filtering
+- ✅ **LinkedIn Profile Links** - Direct links to profiles
+- ✅ **Migration System** - Database versioning and rollback
+- ✅ **Deduplication** - Prevents duplicate connections
+- ✅ **Progressive Sync** - AI-relevant contacts prioritized
+- ✅ **Queue-based Processing** - Resumable after API limits
+- ✅ **Daily Automation** - Scheduled sync at 3 AM
 
-### 🔄 In Progress (v2.1 - Requires API Access)
+### 🔧 In Progress (v2.6)
+- 🔧 Pagination display fix (debugging)
+- 🔄 LinkedIn URN matching for engagement attribution
+- 🔄 AI Network Dashboard UI
+
+### 🔄 Upcoming (v2.7 - Requires API Access)
 - Image upload to LinkedIn
 - Person tagging in images
 - Comment management
