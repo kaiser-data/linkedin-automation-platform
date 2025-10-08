@@ -97,6 +97,7 @@ async function parseConnectionsCSV(csvContent) {
       const position = record['Position'] || record['position'] || record['Job Title'] || record['Title'] || '';
       const connectedOn = record['Connected On'] || record['Connected'] || record['connected on'] || '';
       const linkedinUrl = record['URL'] || record['url'] || record['LinkedIn URL'] || record['Profile URL'] || '';
+      const location = record['Location'] || record['location'] || record['Country'] || record['country'] || '';
 
       // Debug: Log first few records to see what we're getting
       if (index < 3) {
@@ -118,7 +119,8 @@ async function parseConnectionsCSV(csvContent) {
         company: company.trim(),
         position: position.trim(),
         connectedOn: connectedOn.trim(),
-        linkedinUrl: linkedinUrl.trim()
+        linkedinUrl: linkedinUrl.trim(),
+        location: location.trim()
       };
     }).filter(conn => conn !== null); // Remove null entries
 

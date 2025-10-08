@@ -618,8 +618,8 @@ class Database {
 
       const stmt = this.db.prepare(`
         INSERT OR IGNORE INTO connections
-        (user_sub, first_name, last_name, email, company, position, connected_on, linkedin_profile_url)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (user_sub, first_name, last_name, email, company, position, connected_on, linkedin_profile_url, location)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       connections.forEach(conn => {
@@ -631,7 +631,8 @@ class Database {
           conn.company,
           conn.position,
           conn.connectedOn,
-          conn.linkedinUrl || null
+          conn.linkedinUrl || null,
+          conn.location || null
         ], function(err) {
           if (err) {
             errors++;
@@ -774,7 +775,7 @@ class Database {
     return new Promise((resolve, reject) => {
       this.db.all(`
         SELECT id, first_name, last_name, email, company, position,
-               connected_on, linkedin_profile_url, profile_fetched, tags, notes, last_fetched_at
+               connected_on, linkedin_profile_url, location, profile_fetched, tags, notes, last_fetched_at
         FROM connections
         WHERE user_sub = ?
         ORDER BY last_name, first_name

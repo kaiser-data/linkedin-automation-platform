@@ -438,7 +438,6 @@
         totalPages = Math.ceil(totalConnections / perPage);
 
         renderConnections(connections);
-        renderPagination();
       } catch (error) {
         showError('Failed to load connections');
         console.error(error);
@@ -485,12 +484,12 @@
       const startNum = (currentPage - 1) * perPage + 1;
       const endNum = Math.min(startNum + connections.length - 1, totalConnections);
 
-      const table = `
+      const tableHTML = `
         <table class="connections-table">
           <thead>
             <tr>
               <th>Name</th>
-              <th>Email</th>
+              <th>Location</th>
               <th>Company</th>
               <th>Position</th>
               <th>Connected On</th>
@@ -499,17 +498,19 @@
             </tr>
           </thead>
           <tbody>
-            ${connections.map(conn => `
+            ${connections.map(conn => {
+              const hasUrl = conn.linkedin_profile_url && conn.linkedin_profile_url.trim() !== '';
+              return `
               <tr>
                 <td>
                   <strong>${conn.first_name} ${conn.last_name}</strong>
-                  ${conn.linkedin_profile_url ?
+                  ${hasUrl ?
                     `<br><a href="${conn.linkedin_profile_url}" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: #0073b1; text-decoration: none;">
                       🔗 LinkedIn Profile
                     </a>` : ''
                   }
                 </td>
-                <td>${conn.email || '-'}</td>
+                <td>${conn.location || '-'}</td>
                 <td>${conn.company || '-'}</td>
                 <td>${conn.position || '-'}</td>
                 <td>${conn.connected_on || '-'}</td>
@@ -523,23 +524,31 @@
                   <button class="btn btn-sm btn-primary" onclick="viewConnection(${conn.id})">View</button>
                 </td>
               </tr>
-            `).join('')}
+              `;
+            }).join('')}
           </tbody>
         </table>
+      `;
+
+      const paginationInfoHTML = `
         <div class="pagination-info">
           Showing ${startNum}-${endNum} of ${totalConnections} connections
         </div>
       `;
 
-      content.innerHTML = table;
+      const paginationHTML = renderPaginationHTML();
+
+      content.innerHTML = tableHTML + paginationInfoHTML + paginationHTML;
     }
 
-    // Render pagination controls
-    function renderPagination() {
-      let paginationHTML = '<div class="pagination">';
+    // Render pagination controls HTML
+    function renderPaginationHTML() {
+      if (totalPages <= 1) return '';
+
+      let html = '<div class="pagination">';
 
       // Previous button
-      paginationHTML += `
+      html += `
         <button ${currentPage === 1 ? 'disabled' : ''} onclick="loadAllConnections(${currentPage - 1})">
           ← Previous
         </button>
@@ -555,12 +564,12 @@
       }
 
       if (startPage > 1) {
-        paginationHTML += `<button onclick="loadAllConnections(1)">1</button>`;
-        if (startPage > 2) paginationHTML += `<button disabled>...</button>`;
+        html += `<button onclick="loadAllConnections(1)">1</button>`;
+        if (startPage > 2) html += `<button disabled>...</button>`;
       }
 
       for (let i = startPage; i <= endPage; i++) {
-        paginationHTML += `
+        html += `
           <button class="${i === currentPage ? 'active' : ''}" onclick="loadAllConnections(${i})">
             ${i}
           </button>
@@ -568,26 +577,19 @@
       }
 
       if (endPage < totalPages) {
-        if (endPage < totalPages - 1) paginationHTML += `<button disabled>...</button>`;
-        paginationHTML += `<button onclick="loadAllConnections(${totalPages})">${totalPages}</button>`;
+        if (endPage < totalPages - 1) html += `<button disabled>...</button>`;
+        html += `<button onclick="loadAllConnections(${totalPages})">${totalPages}</button>`;
       }
 
       // Next button
-      paginationHTML += `
+      html += `
         <button ${currentPage === totalPages ? 'disabled' : ''} onclick="loadAllConnections(${currentPage + 1})">
           Next →
         </button>
       `;
 
-      paginationHTML += '</div>';
-
-      // Insert pagination after table
-      const content = document.getElementById('connectionsContent');
-      const existingPagination = content.querySelector('.pagination');
-      if (existingPagination) {
-        existingPagination.remove();
-      }
-      content.insertAdjacentHTML('beforeend', paginationHTML);
+      html += '</div>';
+      return html;
     }
 
     // View connection details (placeholder)
