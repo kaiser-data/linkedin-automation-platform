@@ -416,7 +416,13 @@
     let currentPage = 1;
     let totalPages = 1;
     let totalConnections = 0;
+    let totalSearchResults = 0;
     const perPage = 50;
+
+    // Search state management
+    let searchMode = false;
+    let searchQuery = '';
+    let searchCategory = 'all';
 
     // Load stats on page load
     async function loadStats() {
@@ -436,6 +442,11 @@
     // Load all connections with pagination
     async function loadAllConnections(page = 1) {
       try {
+        // Clear search mode
+        searchMode = false;
+        searchQuery = '';
+        searchCategory = 'all';
+
         const offset = (page - 1) * perPage;
         const response = await fetch(`/api/connections?limit=${perPage}&offset=${offset}`);
         const connections = await response.json();
@@ -451,8 +462,8 @@
       }
     }
 
-    // Search connections
-    async function searchConnections() {
+    // Search connections with pagination
+    async function searchConnections(page = 1) {
       const query = document.getElementById('searchInput').value;
       const category = document.getElementById('searchCategory').value;
 
@@ -462,15 +473,33 @@
       }
 
       try {
-        const response = await fetch(`/api/connections/search?q=${encodeURIComponent(query)}&category=${category}`);
-        const connections = await response.json();
-        currentConnections = connections;
-        currentPage = 1;
-        totalPages = 1; // Search results are not paginated
-        renderConnections(connections);
+        // Enable search mode and store search parameters
+        searchMode = true;
+        searchQuery = query;
+        searchCategory = category;
+
+        const offset = (page - 1) * perPage;
+        const response = await fetch(`/api/connections/search?q=${encodeURIComponent(query)}&category=${category}&limit=${perPage}&offset=${offset}`);
+        const result = await response.json();
+
+        currentConnections = result.connections;
+        currentPage = page;
+        totalSearchResults = result.total;
+        totalPages = Math.ceil(result.total / perPage);
+
+        renderConnections(result.connections);
       } catch (error) {
         showError('Search failed');
         console.error(error);
+      }
+    }
+
+    // Navigate to a specific page (handles both search and all modes)
+    function navigateToPage(page) {
+      if (searchMode) {
+        searchConnections(page);
+      } else {
+        loadAllConnections(page);
       }
     }
 
@@ -540,9 +569,10 @@
         </table>
       `;
 
+      const totalCount = searchMode ? totalSearchResults : totalConnections;
       const paginationInfoHTML = `
         <div class="pagination-info">
-          Showing ${startNum}-${endNum} of ${totalConnections} connections
+          Showing ${startNum}-${endNum} of ${totalCount} ${searchMode ? 'results' : 'connections'}
         </div>
       `;
 
@@ -555,11 +585,11 @@
     function renderPaginationHTML() {
       if (totalPages <= 1) return '';
 
-      let html = '<div class="pagination">';
+      let html = '<div class="pagination" id="paginationControls">';
 
       // Previous button
       html += `
-        <button ${currentPage === 1 ? 'disabled' : ''} onclick="loadAllConnections(${currentPage - 1})">
+        <button data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>
           ← Previous
         </button>
       `;
@@ -574,13 +604,13 @@
       }
 
       if (startPage > 1) {
-        html += `<button onclick="loadAllConnections(1)">1</button>`;
+        html += `<button data-page="1">1</button>`;
         if (startPage > 2) html += `<button disabled>...</button>`;
       }
 
       for (let i = startPage; i <= endPage; i++) {
         html += `
-          <button class="${i === currentPage ? 'active' : ''}" onclick="loadAllConnections(${i})">
+          <button data-page="${i}" class="${i === currentPage ? 'active' : ''}">
             ${i}
           </button>
         `;
@@ -588,12 +618,12 @@
 
       if (endPage < totalPages) {
         if (endPage < totalPages - 1) html += `<button disabled>...</button>`;
-        html += `<button onclick="loadAllConnections(${totalPages})">${totalPages}</button>`;
+        html += `<button data-page="${totalPages}">${totalPages}</button>`;
       }
 
       // Next button
       html += `
-        <button ${currentPage === totalPages ? 'disabled' : ''} onclick="loadAllConnections(${currentPage + 1})">
+        <button data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>
           Next →
         </button>
       `;
@@ -601,6 +631,16 @@
       html += '</div>';
       return html;
     }
+
+    // Event delegation for pagination clicks
+    document.addEventListener('click', function(e) {
+      if (e.target.matches('#paginationControls button[data-page]')) {
+        const page = parseInt(e.target.dataset.page);
+        if (!isNaN(page) && page >= 1 && page <= totalPages) {
+          navigateToPage(page);
+        }
+      }
+    });
 
     // View connection details (placeholder)
     function viewConnection(id) {

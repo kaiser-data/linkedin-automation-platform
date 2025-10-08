@@ -185,8 +185,8 @@ async function getConnectionStats(userId) {
 /**
  * Search connections by name, company, position, or location
  */
-async function searchConnections(userId, query, category = 'all', limit = 100) {
-  return await db.searchConnections(userId, query, category, limit);
+async function searchConnections(userId, query, category = 'all', limit = 50, offset = 0) {
+  return await db.searchConnections(userId, query, category, limit, offset);
 }
 
 /**

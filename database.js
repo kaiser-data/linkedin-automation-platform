@@ -670,13 +670,14 @@ class Database {
     });
   }
 
-  searchConnections(userSub, query, category = 'all', limit = 100) {
+  searchConnections(userSub, query, category = 'all', limit = 50, offset = 0) {
     return new Promise((resolve, reject) => {
       const searchPattern = `%${query}%`;
 
       // Build WHERE clause based on category
       let whereClause;
-      let params;
+      let countParams;
+      let queryParams;
 
       if (category === 'all') {
         whereClause = `user_sub = ? AND (
@@ -686,22 +687,27 @@ class Database {
           position LIKE ? OR
           location LIKE ?
         )`;
-        params = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit];
+        countParams = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+        queryParams = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset];
       } else if (category === 'name') {
         whereClause = `user_sub = ? AND (
           first_name LIKE ? OR
           last_name LIKE ?
         )`;
-        params = [userSub, searchPattern, searchPattern, limit];
+        countParams = [userSub, searchPattern, searchPattern];
+        queryParams = [userSub, searchPattern, searchPattern, limit, offset];
       } else if (category === 'company') {
         whereClause = `user_sub = ? AND company LIKE ?`;
-        params = [userSub, searchPattern, limit];
+        countParams = [userSub, searchPattern];
+        queryParams = [userSub, searchPattern, limit, offset];
       } else if (category === 'position') {
         whereClause = `user_sub = ? AND position LIKE ?`;
-        params = [userSub, searchPattern, limit];
+        countParams = [userSub, searchPattern];
+        queryParams = [userSub, searchPattern, limit, offset];
       } else if (category === 'location') {
         whereClause = `user_sub = ? AND location LIKE ?`;
-        params = [userSub, searchPattern, limit];
+        countParams = [userSub, searchPattern];
+        queryParams = [userSub, searchPattern, limit, offset];
       } else {
         // Default to all if invalid category
         whereClause = `user_sub = ? AND (
@@ -711,20 +717,43 @@ class Database {
           position LIKE ? OR
           location LIKE ?
         )`;
-        params = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit];
+        countParams = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern];
+        queryParams = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit, offset];
       }
 
-      this.db.all(`
-        SELECT id, first_name, last_name, email, company, position,
-               connected_on, linkedin_profile_url, location, profile_fetched, tags, notes
+      // First get total count
+      this.db.get(`
+        SELECT COUNT(*) as total
         FROM connections
         WHERE ${whereClause}
-        ORDER BY last_name, first_name
-        LIMIT ?
-      `, params,
-      (err, rows) => {
-        if (err) reject(err);
-        else resolve(rows || []);
+      `, countParams,
+      (err, countRow) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        const total = countRow.total;
+
+        // Then get paginated results
+        this.db.all(`
+          SELECT id, first_name, last_name, email, company, position,
+                 connected_on, linkedin_profile_url, location, profile_fetched, tags, notes
+          FROM connections
+          WHERE ${whereClause}
+          ORDER BY last_name, first_name
+          LIMIT ? OFFSET ?
+        `, queryParams,
+        (err, rows) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve({
+              connections: rows || [],
+              total: total
+            });
+          }
+        });
       });
     });
   }

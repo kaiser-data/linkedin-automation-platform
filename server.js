@@ -940,10 +940,11 @@ app.get('/api/connections/search', requireAuth, async (req, res) => {
   try {
     const query = req.query.q || '';
     const category = req.query.category || 'all';
-    const limit = parseInt(req.query.limit) || 100;
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
 
-    const results = await connections.searchConnections(req.session.user.sub, query, category, limit);
-    res.json(results);
+    const result = await connections.searchConnections(req.session.user.sub, query, category, limit, offset);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
