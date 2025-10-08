@@ -442,23 +442,30 @@
     // Load all connections with pagination
     async function loadAllConnections(page = 1) {
       try {
+        console.log('loadAllConnections called, page:', page);
+
         // Clear search mode
         searchMode = false;
         searchQuery = '';
         searchCategory = 'all';
 
         const offset = (page - 1) * perPage;
+        console.log('Fetching connections with offset:', offset);
+
         const response = await fetch(`/api/connections?limit=${perPage}&offset=${offset}`);
         const connections = await response.json();
+
+        console.log('Received', connections.length, 'connections');
 
         currentConnections = connections;
         currentPage = page;
         totalPages = Math.ceil(totalConnections / perPage);
 
+        console.log('Rendering page', currentPage, 'of', totalPages);
         renderConnections(connections);
       } catch (error) {
         showError('Failed to load connections');
-        console.error(error);
+        console.error('Error loading connections:', error);
       }
     }
 
@@ -466,6 +473,8 @@
     async function searchConnections(page = 1) {
       const query = document.getElementById('searchInput').value;
       const category = document.getElementById('searchCategory').value;
+
+      console.log('searchConnections called, page:', page, 'query:', query, 'category:', category);
 
       if (!query.trim()) {
         loadAllConnections(1);
@@ -479,29 +488,46 @@
         searchCategory = category;
 
         const offset = (page - 1) * perPage;
+        console.log('Searching with offset:', offset);
+
         const response = await fetch(`/api/connections/search?q=${encodeURIComponent(query)}&category=${category}&limit=${perPage}&offset=${offset}`);
         const result = await response.json();
+
+        console.log('Search returned', result.connections.length, 'connections, total:', result.total);
 
         currentConnections = result.connections;
         currentPage = page;
         totalSearchResults = result.total;
         totalPages = Math.ceil(result.total / perPage);
 
+        console.log('Rendering search page', currentPage, 'of', totalPages);
         renderConnections(result.connections);
       } catch (error) {
         showError('Search failed');
-        console.error(error);
+        console.error('Search error:', error);
       }
     }
 
     // Navigate to a specific page (handles both search and all modes)
     function navigateToPage(page) {
+      console.log('navigateToPage called with:', page, 'searchMode:', searchMode);
+
+      // Show loading indicator
+      const content = document.getElementById('connectionsContent');
+      content.innerHTML = '<div class="loading">Loading...</div>';
+
+      // Scroll to top
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+
       if (searchMode) {
         searchConnections(page);
       } else {
         loadAllConnections(page);
       }
     }
+
+    // Expose to window for inline handlers
+    window.goToPage = navigateToPage;
 
     // Render connections table
     function renderConnections(connections) {
@@ -560,7 +586,7 @@
                   }
                 </td>
                 <td>
-                  <button class="btn btn-sm btn-primary" onclick="viewConnection(${conn.id})">View</button>
+                  <button class="btn btn-sm btn-primary" onclick="window.viewConnection(${conn.id})">View</button>
                 </td>
               </tr>
               `;
@@ -587,12 +613,12 @@
 
       let html = '<div class="pagination" id="paginationControls">';
 
-      // Previous button
-      html += `
-        <button data-page="${currentPage - 1}" ${currentPage === 1 ? 'disabled' : ''}>
-          ← Previous
-        </button>
-      `;
+      // Previous button - using window.goToPage for reliability
+      if (currentPage === 1) {
+        html += `<button disabled>← Previous</button>`;
+      } else {
+        html += `<button onclick="window.goToPage(${currentPage - 1})">← Previous</button>`;
+      }
 
       // Page numbers (show max 7 pages)
       const maxPages = 7;
@@ -604,13 +630,13 @@
       }
 
       if (startPage > 1) {
-        html += `<button data-page="1">1</button>`;
+        html += `<button onclick="window.goToPage(1)">1</button>`;
         if (startPage > 2) html += `<button disabled>...</button>`;
       }
 
       for (let i = startPage; i <= endPage; i++) {
         html += `
-          <button data-page="${i}" class="${i === currentPage ? 'active' : ''}">
+          <button onclick="window.goToPage(${i})" class="${i === currentPage ? 'active' : ''}">
             ${i}
           </button>
         `;
@@ -618,34 +644,28 @@
 
       if (endPage < totalPages) {
         if (endPage < totalPages - 1) html += `<button disabled>...</button>`;
-        html += `<button data-page="${totalPages}">${totalPages}</button>`;
+        html += `<button onclick="window.goToPage(${totalPages})">${totalPages}</button>`;
       }
 
       // Next button
-      html += `
-        <button data-page="${currentPage + 1}" ${currentPage === totalPages ? 'disabled' : ''}>
-          Next →
-        </button>
-      `;
+      if (currentPage === totalPages) {
+        html += `<button disabled>Next →</button>`;
+      } else {
+        html += `<button onclick="window.goToPage(${currentPage + 1})">Next →</button>`;
+      }
 
       html += '</div>';
       return html;
     }
 
-    // Event delegation for pagination clicks
-    document.addEventListener('click', function(e) {
-      if (e.target.matches('#paginationControls button[data-page]')) {
-        const page = parseInt(e.target.dataset.page);
-        if (!isNaN(page) && page >= 1 && page <= totalPages) {
-          navigateToPage(page);
-        }
-      }
-    });
-
     // View connection details (placeholder)
     function viewConnection(id) {
+      console.log('viewConnection called for ID:', id);
       alert(`Connection details view coming soon! ID: ${id}\n\nYou'll be able to:\n- View profile data\n- Add tags\n- Add notes\n- Manually fetch profile data`);
     }
+
+    // Expose to window for inline handlers
+    window.viewConnection = viewConnection;
 
     // File upload handling
     const uploadArea = document.getElementById('uploadArea');
