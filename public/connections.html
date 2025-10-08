@@ -393,9 +393,16 @@
       <h2>👥 Your Connections</h2>
 
       <div class="search-bar">
-        <input type="text" id="searchInput" placeholder="Search by name, company, or position..." />
+        <select id="searchCategory" style="padding: 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+          <option value="all">All Fields</option>
+          <option value="name">Name</option>
+          <option value="company">Company</option>
+          <option value="position">Position</option>
+          <option value="location">Location</option>
+        </select>
+        <input type="text" id="searchInput" placeholder="Search connections..." />
         <button onclick="searchConnections()">Search</button>
-        <button class="btn-secondary" onclick="loadAllConnections()">Show All</button>
+        <button class="btn-secondary" onclick="loadAllConnections(1)">Show All</button>
       </div>
 
       <div id="connectionsContent">
@@ -447,16 +454,19 @@
     // Search connections
     async function searchConnections() {
       const query = document.getElementById('searchInput').value;
+      const category = document.getElementById('searchCategory').value;
 
       if (!query.trim()) {
-        loadAllConnections();
+        loadAllConnections(1);
         return;
       }
 
       try {
-        const response = await fetch(`/api/connections/search?q=${encodeURIComponent(query)}`);
+        const response = await fetch(`/api/connections/search?q=${encodeURIComponent(query)}&category=${category}`);
         const connections = await response.json();
         currentConnections = connections;
+        currentPage = 1;
+        totalPages = 1; // Search results are not paginated
         renderConnections(connections);
       } catch (error) {
         showError('Search failed');

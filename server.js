@@ -939,9 +939,10 @@ app.get('/api/connections/stats', requireAuth, async (req, res) => {
 app.get('/api/connections/search', requireAuth, async (req, res) => {
   try {
     const query = req.query.q || '';
-    const limit = parseInt(req.query.limit) || 50;
+    const category = req.query.category || 'all';
+    const limit = parseInt(req.query.limit) || 100;
 
-    const results = await connections.searchConnections(req.session.user.sub, query, limit);
+    const results = await connections.searchConnections(req.session.user.sub, query, category, limit);
     res.json(results);
   } catch (error) {
     res.status(500).json({ error: error.message });

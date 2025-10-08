@@ -670,23 +670,58 @@ class Database {
     });
   }
 
-  searchConnections(userSub, query, limit = 50) {
+  searchConnections(userSub, query, category = 'all', limit = 100) {
     return new Promise((resolve, reject) => {
       const searchPattern = `%${query}%`;
-      this.db.all(`
-        SELECT id, first_name, last_name, email, company, position,
-               connected_on, profile_fetched, tags, notes
-        FROM connections
-        WHERE user_sub = ? AND (
+
+      // Build WHERE clause based on category
+      let whereClause;
+      let params;
+
+      if (category === 'all') {
+        whereClause = `user_sub = ? AND (
           first_name LIKE ? OR
           last_name LIKE ? OR
-          email LIKE ? OR
           company LIKE ? OR
-          position LIKE ?
-        )
+          position LIKE ? OR
+          location LIKE ?
+        )`;
+        params = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit];
+      } else if (category === 'name') {
+        whereClause = `user_sub = ? AND (
+          first_name LIKE ? OR
+          last_name LIKE ?
+        )`;
+        params = [userSub, searchPattern, searchPattern, limit];
+      } else if (category === 'company') {
+        whereClause = `user_sub = ? AND company LIKE ?`;
+        params = [userSub, searchPattern, limit];
+      } else if (category === 'position') {
+        whereClause = `user_sub = ? AND position LIKE ?`;
+        params = [userSub, searchPattern, limit];
+      } else if (category === 'location') {
+        whereClause = `user_sub = ? AND location LIKE ?`;
+        params = [userSub, searchPattern, limit];
+      } else {
+        // Default to all if invalid category
+        whereClause = `user_sub = ? AND (
+          first_name LIKE ? OR
+          last_name LIKE ? OR
+          company LIKE ? OR
+          position LIKE ? OR
+          location LIKE ?
+        )`;
+        params = [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit];
+      }
+
+      this.db.all(`
+        SELECT id, first_name, last_name, email, company, position,
+               connected_on, linkedin_profile_url, location, profile_fetched, tags, notes
+        FROM connections
+        WHERE ${whereClause}
         ORDER BY last_name, first_name
         LIMIT ?
-      `, [userSub, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, limit],
+      `, params,
       (err, rows) => {
         if (err) reject(err);
         else resolve(rows || []);

@@ -183,10 +183,10 @@ async function getConnectionStats(userId) {
 }
 
 /**
- * Search connections by name, company, or position
+ * Search connections by name, company, position, or location
  */
-async function searchConnections(userId, query) {
-  return await db.searchConnections(userId, query);
+async function searchConnections(userId, query, category = 'all', limit = 100) {
+  return await db.searchConnections(userId, query, category, limit);
 }
 
 /**
